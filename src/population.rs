@@ -254,13 +254,13 @@ mod tests {
     #[test]
     fn population_should_be_able_to_speciate_genomes() {
         let mut genome1 = Genome::default();
-        genome1.add_gene(Gene::new(0, 0, 1f64, true, false));
-        genome1.add_gene(Gene::new(0, 1, 1f64, true, false));
+        genome1.add_gene(Gene{ source_id:0, target_id: 0,weight: 1f64,enabled: true, bias: false});
+        genome1.add_gene(Gene{ source_id:0, target_id: 1,weight: 1f64,enabled: true, bias: false});
         let mut genome2 = Genome::default();
-        genome1.add_gene(Gene::new(0, 0, 1f64, true, false));
-        genome1.add_gene(Gene::new(0, 1, 1f64, true, false));
-        genome2.add_gene(Gene::new(1, 1, 1f64, true, false));
-        genome2.add_gene(Gene::new(1, 0, 1f64, true, false));
+        genome1.add_gene(Gene{ source_id:0, target_id: 0,weight: 1f64,enabled: true, bias: false});
+        genome1.add_gene(Gene{ source_id:0, target_id: 1,weight: 1f64,enabled: true, bias: false});
+        genome2.add_gene(Gene{ source_id:1, target_id: 1,weight: 1f64,enabled: true, bias: false});
+        genome2.add_gene(Gene{ source_id:1, target_id: 0,weight: 1f64,enabled: true, bias: false});
 
         let mut population = Population::create_population(2);
         let organisms = vec![Organism::new(genome1), Organism::new(genome2)];

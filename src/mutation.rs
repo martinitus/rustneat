@@ -6,50 +6,30 @@ impl dyn Mutation {
     pub fn connection_weight(gene: &mut Gene, perturbation: bool) {
         let mut new_weight = Gene::generate_weight();
         if perturbation {
-            new_weight += gene.weight();
+            new_weight += gene.weight;
         }
-        gene.set_weight(new_weight);
+        gene.weight = new_weight;
     }
 
     pub fn add_connection(in_neuron_id: usize, out_neuron_id: usize) -> Gene {
-        Gene::new(
-            in_neuron_id,
-            out_neuron_id,
-            Gene::generate_weight(),
-            true,
-            false,
-        )
+        Gene::new(in_neuron_id, out_neuron_id)
     }
 
     pub fn add_neuron(gene: &mut Gene, new_neuron_id: usize) -> (Gene, Gene) {
-        gene.set_disabled();
+        gene.disable();
 
-        let gen1 = Gene::new(gene.in_neuron_id(), new_neuron_id, 1f64, true, false);
+        let gen1 = Gene { source_id: gene.source_id, target_id: new_neuron_id, weight: 1f64, enabled: true, bias: false };
+        let gen2 = Gene { source_id: new_neuron_id, target_id: gene.target_id, weight: gene.weight, enabled: true, bias: false };
 
-        let gen2 = Gene::new(
-            new_neuron_id,
-            gene.out_neuron_id(),
-            gene.weight(),
-            true,
-            false,
-        );
         (gen1, gen2)
     }
 
     pub fn toggle_expression(gene: &mut Gene) {
-        if gene.enabled() {
-            gene.set_disabled()
-        } else {
-            gene.set_enabled()
-        }
+        gene.toggle_enabled();
     }
 
     pub fn toggle_bias(gene: &mut Gene) {
-        if gene.is_bias() {
-            gene.set_bias(false)
-        } else {
-            gene.set_bias(true)
-        }
+        gene.toggle_bias();
     }
 }
 
@@ -60,12 +40,12 @@ mod tests {
 
     #[test]
     fn mutate_toggle_gene_should_toggle() {
-        let mut gene = Gene::new(0, 1, 1f64, false, false);
+        let mut gene = Gene { source_id: 0, target_id: 1, weight: 1f64, enabled: false, bias: false };
 
         <dyn Mutation>::toggle_expression(&mut gene);
-        assert!(gene.enabled());
+        assert!(gene.enabled);
 
         <dyn Mutation>::toggle_expression(&mut gene);
-        assert!(!gene.enabled());
+        assert!(!gene.enabled);
     }
 }

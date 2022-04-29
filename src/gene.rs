@@ -7,18 +7,23 @@ use std::cmp::Ordering;
 #[derive(Debug, Copy, Clone)]
 #[cfg_attr(feature = "telemetry", derive(Serialize))]
 pub struct Gene {
-    in_neuron_id: usize,
-    out_neuron_id: usize,
-    weight: f64,
-    enabled: bool,
-    is_bias: bool,
+    /// The id of the source neuron
+    pub source_id: usize,
+    /// The id of the target neuron
+    pub target_id: usize,
+    /// The connection strength
+    pub weight: f64,
+    /// Whether the connection is enabled or not
+    pub enabled: bool,
+    /// Whether the connection is a bias input or not
+    pub bias: bool,
 }
 
 impl Eq for Gene {}
 
 impl PartialEq for Gene {
     fn eq(&self, other: &Gene) -> bool {
-        self.in_neuron_id == other.in_neuron_id && self.out_neuron_id == other.out_neuron_id
+        self.source_id == other.source_id && self.target_id == other.target_id
     }
 }
 
@@ -26,13 +31,13 @@ impl Ord for Gene {
     fn cmp(&self, other: &Gene) -> Ordering {
         if self == other {
             Ordering::Equal
-        } else if self.in_neuron_id == other.in_neuron_id {
-            if self.out_neuron_id > other.out_neuron_id {
+        } else if self.source_id == other.source_id {
+            if self.target_id > other.target_id {
                 Ordering::Greater
             } else {
                 Ordering::Less
             }
-        } else if self.in_neuron_id > other.in_neuron_id {
+        } else if self.source_id > other.source_id {
             Ordering::Greater
         } else {
             Ordering::Less
@@ -47,28 +52,11 @@ impl PartialOrd for Gene {
 }
 
 impl Gene {
-    /// Create a new gene
-    pub fn new(
-        in_neuron_id: usize,
-        out_neuron_id: usize,
-        weight: f64,
-        enabled: bool,
-        is_bias: bool,
-    ) -> Gene {
-        Gene {
-            in_neuron_id,
-            out_neuron_id,
-            weight,
-            enabled,
-            is_bias,
-        }
-    }
-
     /// Create a new gene with a specific connection
-    pub fn new_connection(in_neuron_id: usize, out_neuron_id: usize) -> Gene {
+    pub fn new(in_neuron_id: usize, out_neuron_id: usize) -> Gene {
         Gene {
-            in_neuron_id,
-            out_neuron_id,
+            source_id: in_neuron_id,
+            target_id: out_neuron_id,
             ..Gene::default()
         }
     }
@@ -77,52 +65,29 @@ impl Gene {
     pub fn generate_weight() -> f64 {
         rand::random::<Closed01<f64>>().0 * 2f64 - 1f64
     }
-    /// Connection in ->
-    pub fn in_neuron_id(&self) -> usize {
-        self.in_neuron_id
-    }
-    /// connection out <->
-    pub fn out_neuron_id(&self) -> usize {
-        self.out_neuron_id
-    }
-    /// getter for the wight of the gene
-    pub fn weight(&self) -> f64 {
-        self.weight
-    }
-    /// Setter
-    pub fn set_weight(&mut self, weight: f64) {
-        self.weight = weight;
-    }
-    /// Is gene enabled
-    pub fn enabled(&self) -> bool {
-        self.enabled
-    }
     /// Set gene enabled
-    pub fn set_enabled(&mut self) {
+    pub fn enable(&mut self) {
         self.enabled = true;
     }
     /// Set gene disabled
-    pub fn set_disabled(&mut self) {
+    pub fn disable(&mut self) {
         self.enabled = false;
     }
-    /// Get if gene is bias
-    pub fn is_bias(&self) -> bool {
-        self.is_bias
-    }
-    /// Set or disable bias
-    pub fn set_bias(&mut self, is_bias: bool) {
-        self.is_bias = is_bias
-    }
+
+    /// Toggle the enable state
+    pub fn toggle_enabled(&mut self) { self.enabled = !self.enabled; }
+    /// Toggle the bias state
+    pub fn toggle_bias(&mut self) { self.bias = !self.bias; }
 }
 
 impl Default for Gene {
     fn default() -> Gene {
         Gene {
-            in_neuron_id: 1,
-            out_neuron_id: 1,
+            source_id: 1,
+            target_id: 1,
             weight: Gene::generate_weight(),
             enabled: true,
-            is_bias: false,
+            bias: false,
         }
     }
 }
@@ -133,8 +98,8 @@ mod tests {
 
     fn g(n_in: usize, n_out: usize) -> Gene {
         Gene {
-            in_neuron_id: n_in,
-            out_neuron_id: n_out,
+            source_id: n_in,
+            target_id: n_out,
             ..Gene::default()
         }
     }
