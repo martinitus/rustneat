@@ -17,7 +17,7 @@ impl<'a> SpeciesEvaluator<'a> {
     pub fn new(environment: &mut dyn Environment) -> SpeciesEvaluator {
         SpeciesEvaluator {
             threads: environment.threads(),
-            environment: environment,
+            environment,
         }
     }
 

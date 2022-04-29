@@ -56,19 +56,19 @@ impl Gene {
         is_bias: bool,
     ) -> Gene {
         Gene {
-            in_neuron_id: in_neuron_id,
-            out_neuron_id: out_neuron_id,
-            weight: weight,
-            enabled: enabled,
-            is_bias: is_bias,
+            in_neuron_id,
+            out_neuron_id,
+            weight,
+            enabled,
+            is_bias,
         }
     }
 
     /// Create a new gene with a specific connection
     pub fn new_connection(in_neuron_id: usize, out_neuron_id: usize) -> Gene {
         Gene {
-            in_neuron_id: in_neuron_id,
-            out_neuron_id: out_neuron_id,
+            in_neuron_id,
+            out_neuron_id,
             ..Gene::default()
         }
     }

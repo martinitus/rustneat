@@ -196,7 +196,6 @@ mod tests {
     use super::*;
     use genome::Genome;
     use organism::Organism;
-    use std::f64::EPSILON;
 
     #[test]
     fn specie_should_return_correct_average_fitness() {
@@ -214,6 +213,6 @@ mod tests {
         specie.add(organism2);
         specie.add(organism3);
 
-        assert!((specie.calculate_average_fitness() - 15f64).abs() < EPSILON);
+        assert!((specie.calculate_average_fitness() - 15f64).abs() < f64::EPSILON);
     }
 }
