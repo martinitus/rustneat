@@ -1,5 +1,6 @@
 // run with: cargo run --release --example ctrnn --features="telemetry ctrnn_telemetry"
 // try to reproduce results from: http://www.tinyblueplanet.com/easy/FCSReport.pdf
+use ndarray::prelude::*;
 extern crate rustneat;
 
 use rustneat::{Ctrnn, CtrnnNeuralNetwork};
@@ -10,6 +11,7 @@ mod telemetry_helper;
 #[cfg(feature = "telemetry")]
 #[macro_use]
 extern crate rusty_dashed;
+extern crate ndarray;
 
 #[cfg(feature = "telemetry")]
 use self::rusty_dashed::Dashboard;
@@ -49,11 +51,11 @@ fn activate_minimal_ctrnn_node(initial: f64) {
         5.0,
         0.01,
         &CtrnnNeuralNetwork {
-            y: &vec![initial],
-            tau: &vec![1.0],
-            wji: &vec![0.0],
-            theta: &vec![0.0],
-            i: &vec![0f64],
+            y: array![initial],//&vec![initial],
+            tau: array![1.0],
+            wji: array![[0.0]],
+            theta: array![0.0],
+            i: array![0f64],
         },
     );
 }
@@ -86,11 +88,11 @@ fn activate_step_size_test(step_size: f64) {
         15.0 * step_size,
         step_size,
         &CtrnnNeuralNetwork {
-            y: &vec![1.0],
-            tau: &vec![1.0],
-            wji: &vec![0.0],
-            theta: &vec![0.0],
-            i: &vec![0.5],
+            y: array![1.0],
+            tau: array![1.0],
+            wji: array![[0.0]],
+            theta: array![0.0],
+            i: array![0.5],
         },
     );
 }

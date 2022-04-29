@@ -15,7 +15,8 @@ crossbeam = "0.2"
 lazy_static = "0.2.2"
 num_cpus = "1.0"
 rand = "0.4"
-rulinalg = "0.3.4"
+approx = "0.5.1"
+ndarray = { vesion = "0.15.0", features = ["approx-0_5"] }
 
 rusty_dashed = { version = "0.2.2", optional = true }
 open = { version = "1.2.1", optional = true }

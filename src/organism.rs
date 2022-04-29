@@ -1,3 +1,5 @@
+use ndarray::{Array1, Array2, s};
+
 use ctrnn::{Ctrnn, CtrnnNeuralNetwork};
 use genome::Genome;
 use std::cmp;
@@ -55,36 +57,31 @@ impl Organism {
     }
     /// Activate this organism in the NN
     pub fn activate(&mut self, sensors: Vec<f64>, outputs: &mut Vec<f64>) {
-        let neurons_len = self.genome.len();
-        let sensors_len = sensors.len();
-
-        let tau = vec![0.01; neurons_len];
-        let theta = self.get_bias();
+        let n_neurons = self.genome.len();
+        let n_sensors = sensors.len();
 
         let mut i = sensors.clone();
 
-        if neurons_len < sensors_len {
-            i.truncate(neurons_len);
+        if n_neurons < n_sensors {
+            i.truncate(n_neurons);
         } else {
-            i = [i, vec![0.0; neurons_len - sensors_len]].concat();
+            i = [i, vec![0.0; n_neurons - n_sensors]].concat();
         }
-
-        let wji = self.get_weights();
 
         let activations = Ctrnn::default().activate_nn(
             0.1,
             0.01,
             &CtrnnNeuralNetwork {
-                y: &vec![0.0; neurons_len],
-                tau: &tau,
-                wji: &wji,
-                theta: &theta,
-                i: &i,
+                y: Array1::zeros((n_neurons, )),
+                tau: Array1::from_elem((n_neurons, ), 0.01),
+                wji: self.get_weights(),
+                theta: self.get_bias(),
+                i: i.into(),
             },
         );
 
-        if sensors_len < neurons_len {
-            let outputs_activations = activations.split_at(sensors_len).1.to_vec();
+        if n_sensors < n_neurons {
+            let outputs_activations = activations.slice(s![n_sensors..]).to_vec();
 
             for n in 0..cmp::min(outputs_activations.len(), outputs.len()) {
                 outputs[n] = outputs_activations[n];
@@ -92,20 +89,20 @@ impl Organism {
         }
     }
 
-    fn get_weights(&self) -> Vec<f64> {
+    fn get_weights(&self) -> Array2<f64> {
         let neurons_len = self.genome.len();
-        let mut matrix = vec![0.0; neurons_len * neurons_len];
+        let mut matrix = Array2::zeros((neurons_len, neurons_len));
         for gene in self.genome.get_genes() {
             if gene.enabled() {
-                matrix[(gene.out_neuron_id() * neurons_len) + gene.in_neuron_id()] = gene.weight()
+                matrix[[gene.out_neuron_id(), gene.in_neuron_id()]] = gene.weight()
             }
         }
         matrix
     }
 
-    fn get_bias(&self) -> Vec<f64> {
+    fn get_bias(&self) -> Array1<f64> {
         let neurons_len = self.genome.len();
-        let mut matrix = vec![0.0; neurons_len];
+        let mut matrix = Array1::zeros((neurons_len, ));
         for gene in self.genome.get_genes() {
             if gene.is_bias() {
                 matrix[gene.in_neuron_id()] += 1f64;
@@ -118,8 +115,10 @@ impl Organism {
 #[cfg(test)]
 use gene::Gene;
 
+
 #[cfg(test)]
 mod tests {
+    use ndarray::array;
     use super::*;
     use genome::Genome;
 
@@ -217,7 +216,7 @@ mod tests {
         organism.genome.add_gene(Gene::new(1, 0, 1f64, true, false));
         assert_eq!(
             organism.get_weights(),
-            vec![0.0, 1.0, 0.0, 1.0, 0.0, 0.5, 0.0, 0.5, 0.75]
+            array![[0.0, 1.0, 0.0], [1.0, 0.0, 0.5], [0.0, 0.5, 0.75]]
         );
     }
 
