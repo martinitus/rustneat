@@ -31,17 +31,13 @@ impl Ctrnn {
     pub fn activate_nn(&self, time: f64, step_size: f64, nn: &CtrnnNeuralNetwork) -> Array1<f64> {
         let steps = (time / step_size) as usize;
         let mut y = nn.y.clone();
-        let theta = &nn.theta;
-        let wji = &nn.wji;
-        let i = &nn.i;
-        let tau = &nn.tau;
 
         #[cfg(feature = "ctrnn_telemetry")]
             Ctrnn::telemetry(&y);
 
         for _ in 0..steps {
-            let current_weights = (&y + theta).map(&Ctrnn::sigmoid);
-            y = &y + (((wji.dot(&current_weights)) - &y + i) / tau).map(&|j_value| step_size * j_value);
+            let current_weights = (&y + &nn.theta).map(&Ctrnn::sigmoid);
+            y = &y + (((&nn.wji.dot(&current_weights)) - &y + &nn.i) / &nn.tau).map(&|j_value| step_size * j_value);
             #[cfg(feature = "ctrnn_telemetry")]
                 Ctrnn::telemetry(&y);
         }
@@ -97,7 +93,7 @@ mod tests {
         let expected = array![0.14934191797049204, 1.3345894864370869, 0.5691613026150651];
         assert!(AbsDiffEq::abs_diff_eq(&result, &expected, 1e-8));
 
-        let result=ctrnn.activate_nn(30.0, 0.1, &nn);
+        let result = ctrnn.activate_nn(30.0, 0.1, &nn);
         let expected = array![0.5583616282859531, 3.149231725259237, 1.3050168324825089];
         assert!(AbsDiffEq::abs_diff_eq(&result, &expected, 1e-8));
 
