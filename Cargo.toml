@@ -1,21 +1,16 @@
 [package]
-authors = ["Hugo Freire <hfreire@abajar.com>"]
-description = "Implementation of NeuroEvolution of Augmenting Topologies NEAT http://nn.cs.utexas.edu/downloads/papers/stanley.ec02.pdf with a Continuous-Time Recurrent Neural Networks"
-documentation = "https://github.com/TLmaK0/rustneat"
-homepage = "https://github.com/TLmaK0/rustneat"
+authors = ["Martin Rückl <enigma@nbubu.de>"]
+description = "Implementation of NeuroEvolution of Augmenting Topologies (NEAT)"
 keywords = ["neuroevolution", "neat", "aumenting-topologies", "genetic", "algorithm"]
 license = "MIT"
-name = "rustneat"
-repository = "https://github.com/TLmaK0/rustneat"
-version = "0.3.0"
+name = "neat-rs"
+version = "0.0.1"
 
 [dependencies]
-#lazy_static = "0.2.2"
-#num_cpus = "1.0"
 lazycell = "1.3.0"
 rand = "0.8.5"
 approx = "0.5.1"
 ndarray = { vesion = "0.15.0", features = ["approx-0_5"] }
-
+petgraph = "0.6.0"
 clippy = { version = "0.0.103", optional = true }
-#ctrlc = { version = "3.1.4", optional = true }
+generator = "0.7.0"

@@ -1,20 +1,19 @@
+use generator::Gn;
 use ndarray::prelude::*;
 use lazycell::LazyCell;
 use std::cmp::max;
+use petgraph::{Directed, Graph};
+use petgraph::graph::{EdgeReference, NodeIndex};
 
 /// A connection Gene
 #[derive(Debug, Clone, PartialEq)]
 pub struct Connection {
-    /// The id of the source neuron
-    pub source_id: usize,
-    /// The id of the target neuron
-    pub target_id: usize,
     /// The connection strength
     pub weight: f64,
     /// Whether the connection is enabled or not
     pub enabled: bool,
     /// The innovation number of that gene
-    pub innovation_number: usize,
+    pub innovation_id: usize,
 }
 
 
@@ -23,32 +22,81 @@ pub struct Connection {
 /// Neuron index 0: Bias neuron. counts as input neuron.
 /// Neuron indices 1..n_input+1 : Input neurons
 /// Neuron indices n_input+1..n_input+1+n_output : Output neurons
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Genome {
     /// All connections of the genome including connections from
     /// and to input and output neurons and bias neuron.
     /// input_id, output_id, innovation_number.
     /// Ordered by innovation number!
-    connections: Vec<Connection>,
+    graph: Graph<(), Connection>,
+    /// The indices of the special nodes
+    bias: NodeIndex,
+    inputs: Vec<NodeIndex>,
+    outputs: Vec<NodeIndex>,
+    // The connections of the graph in ascending innovation order
+    // // connections: Vec<&'a Connection>, // fixme: remove beacuse as we only ever add nodes probably petgraph edeglist will have the order.
 }
 
+impl PartialEq<Self> for Genome {
+    // from https://github.com/petgraph/petgraph/issues/199#issuecomment-484077775
+    fn eq(&self, other: &Self) -> bool {
+        let a_ns = self.graph.raw_nodes().iter().map(|n| &n.weight);
+        let b_ns = other.graph.raw_nodes().iter().map(|n| &n.weight);
+        let a_es = self.graph.raw_edges().iter().map(|e| (e.source(), e.target(), &e.weight));
+        let b_es = other.graph.raw_edges().iter().map(|e| (e.source(), e.target(), &e.weight));
+        a_ns.eq(b_ns) && a_es.eq(b_es)
+    }
+}
+
+
 impl Genome {
+    /// Build a fully connected initial (default) genome.
+    pub fn new(inputs: usize, outputs: usize) -> Genome {
+        let mut graph = Graph::default();
+        let bias: NodeIndex = graph.add_node(());
+        let inputs: Vec<NodeIndex> = (0..inputs).map(|i| graph.add_node(())).collect();
+        let outputs: Vec<NodeIndex> = (0..outputs).map(|i| graph.add_node(())).collect();
+
+        // let mut connections = Vec::default();
+        let mut c = 0;
+        for o in outputs.iter() {
+            graph.add_edge(bias, *o, Connection { weight: 1., enabled: true, innovation_id: c });
+            // let conn = graph.edge_weight(i).unwrap();
+            // connections.push(conn);
+            for i in inputs.iter() {
+                graph.add_edge(*i, *o, Connection { weight: 1., enabled: true, innovation_id: c });
+                c = c + 1;
+            }
+        }
+
+        Genome { graph, bias, inputs, outputs }//, connections }
+    }
+
+    /// Vector of input node indices
+    pub fn inputs(&self) -> &'_ Vec<NodeIndex> { &self.inputs }
+
+    /// Vector of output node indices
+    pub fn outputs(&self) -> &'_ Vec<NodeIndex> { &self.outputs }
+
+    /// Bias node index
+    pub fn bias(&self) -> NodeIndex { self.bias }
+
     /// Get the connection between given source and target neuron.
-    pub fn connection(&self, source: usize, target: usize) -> Option<&'_ Connection> {
-        unimplemented!();
-        None
+    pub fn connection(&self, source: NodeIndex, target: NodeIndex) -> Option<&'_ Connection> {
+        assert_eq!(self.graph.edges_connecting(source, target).count(), 1);
+        self.graph.edges_connecting(source, target).next().map(|er| er.weight())
     }
 
     /// Get the connection with given innovation number.
     pub fn innovation(&self, id: usize) -> Option<&'_ Connection> {
-        if id > self.connections.last().unwrap().innovation_number {
+        if id > self.graph.edge_weights().last().unwrap().innovation_id {
             return None;
         }
-
-        match self.connections.binary_search_by_key(&id, move |conn| conn.innovation_number) {
-            Ok(pos) => Some(&self.connections[pos]),
-            Err(_) => None
-        }
+        unimplemented!()
+        // match self.connections.binary_search_by_key(&id, move |conn| conn.innovation_id) {
+        //     Ok(pos) => Some(&self.connections[pos]),
+        //     Err(_) => None
+        // }
     }
 
     /// > Genes that do not match are either disjoint or excess, depending on whether they occur
@@ -56,18 +104,37 @@ impl Genome {
     /// > numbers. They represent structure that is not present in the other genome.
     /// [Pag. 110, NEAT](http://nn.cs.utexas.edu/downloads/papers/stanley.ec02.pdf)
     pub fn excess(&self, other: &Genome) -> impl Iterator<Item=&'_ Connection> {
-        let threshold = other.connections.last().unwrap().innovation_number;
-        self.connections
-            .iter()
-            .filter(move |&gene| gene.innovation_number > threshold)
+        let threshold = other.graph.edge_weights().last().unwrap().innovation_id;
+        self.graph.edge_weights()
+            .filter(move |&gene| gene.innovation_id > threshold)
     }
     pub fn disjoint(&self, other: &Genome) -> impl Iterator<Item=&'_ Connection> {
         unimplemented!();
-        self.connections.iter()
+        self.graph.edge_weights()
     }
-    pub fn matching(&self, other: &Genome) -> impl Iterator<Item=&'_ Connection> {
-        unimplemented!();
-        self.connections.iter()
+    pub fn matching<'o>(&'o self, other: &'o Genome) -> impl Iterator<Item=(&'o Connection, &'o Connection)> {
+        Gn::new_scoped(move |mut s| {
+            let mut it1 = self.graph.edge_weights().into_iter();
+            let mut it2 = other.graph.edge_weights().into_iter();
+            while true {
+                let e1 = it1.next();
+                let e2 = it2.next();
+                if e1.is_none() || e2.is_none() {
+                    break;
+                }
+                let e1 = e1.unwrap();
+                let e2 = e2.unwrap();
+                if e1.innovation_id == e2.innovation_id {
+                    s.yield_((e1, e2));
+                }
+                if e1.innovation_id >= e2.innovation_id {
+                    e2 = it2.next();
+                } else {
+                    e1 = it1.next();
+                }
+            }
+            done!();
+        })
     }
 
     /// δ = (c1 * E)/N + (c2 * D)/N + c3*W
@@ -85,7 +152,7 @@ impl Genome {
 
         // N, the number of genes in the larger genome, normalizes for genome size (N
         // can be set to 1 if both genomes are small, i.e., consist of fewer than 20 genes)
-        let N = max(self.connections.len(), other.connections.len());
+        let N = max(self.graph.edge_count(), other.graph.edge_count());
 
         return (c1 * n_excess as f64 + c2 * n_disjoint as f64) / N as f64 + c3 * avg_difference;
     }
@@ -134,26 +201,14 @@ pub struct Population {
 impl Population {
     pub fn new(size: usize, inputs: usize, outputs: usize) -> Population {
         Population {
-            genomes: vec![Population::initial_genome(inputs, outputs); size],
+            genomes: vec![Genome::new(inputs, outputs); size],
             n_inputs: inputs,
             n_outputs: outputs,
             //fixme: representative could also be a reference or an index into the genomes array?!
-            species: vec![Species { representative: Population::initial_genome(inputs, outputs) }],
+            species: vec![Species { representative: Genome::new(inputs, outputs) }],
         }
     }
 
-    /// Build a fully connected initial (default) genome.
-    fn initial_genome(inputs: usize, outputs: usize) -> Genome {
-        let mut connections: Vec<Connection> = Vec::default();
-        let mut c = 0;
-        for i in 0..inputs + 1 {
-            for o in inputs + 1..inputs + 1 + outputs {
-                connections.push(Connection { source_id: i, target_id: o, weight: 1., enabled: true, innovation_number: c });
-                c += 1;
-            }
-        }
-        Genome { connections }
-    }
 
     // pub fn mutate() -> Vec<Mutation> {}
 
@@ -247,7 +302,7 @@ mod tests {
             assert_eq!(g, sample);
         }
 
-        assert_eq!(sample.connections.len(), 3 * 3 + 3)
+        assert_eq!(sample.graph.edge_count(), 3 * 3 + 3)
         // fixme: add test for connectivity?
     }
 
