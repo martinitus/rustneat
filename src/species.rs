@@ -2,18 +2,18 @@ use conv::prelude::*;
 use genome::Genome;
 use organism::Organism;
 use rand;
-use rand::distributions::{IndependentSample, Range};
 use rand::Rng;
+use rand::seq::SliceRandom;
 
 /// A species (several organisms) and associated fitnesses
 #[derive(Debug, Clone)]
-pub struct Specie {
+pub struct Species {
     representative: Genome,
     average_fitness: f64,
     champion_fitness: f64,
     age: usize,
     age_last_improvement: usize,
-    /// All orgnamisms in this species
+    /// All organisms in this species
     pub organisms: Vec<Organism>,
     /// Allows to set an id to identify it
     pub id: i64,
@@ -23,10 +23,10 @@ const MUTATION_PROBABILITY: f64 = 0.25f64;
 const INTERSPECIE_MATE_PROBABILITY: f64 = 0.001f64;
 const BEST_ORGANISMS_THRESHOLD: f64 = 1f64;
 
-impl Specie {
+impl Species {
     /// Create a new species from a Genome
-    pub fn new(genome: Genome) -> Specie {
-        Specie {
+    pub fn new(genome: Genome) -> Species {
+        Species {
             organisms: vec![],
             representative: genome,
             average_fitness: 0f64,
@@ -44,7 +44,7 @@ impl Specie {
 
     /// Check if another organism is of the same species as this one.
     pub fn match_genome(&self, organism: &Organism) -> bool {
-        self.representative.is_same_specie(&organism.genome)
+        self.representative.is_same_species(&organism.genome)
     }
 
     /// Get the most performant organism
@@ -101,19 +101,11 @@ impl Specie {
         self.organisms.truncate(organisms_to_mate);
 
         let mut rng = rand::thread_rng();
-        let mut offspring: Vec<Organism> = {
-            let mut selected_organisms = vec![];
-            let range = Range::new(0, self.organisms.len());
-            for _ in 0..num_of_organisms - copy_champion {
-                selected_organisms.push(range.ind_sample(&mut rng));
-            }
-            selected_organisms
-                .iter()
-                .map(|organism_pos| {
-                    self.create_child(&self.organisms[*organism_pos], population_organisms)
-                })
-                .collect::<Vec<Organism>>()
-        };
+        let mut offspring: Vec<Organism> = self.organisms.choose_multiple(&mut rng, num_of_organisms - copy_champion)
+            .map(|organism| {
+                self.create_child(&organism, population_organisms)
+            })
+            .collect();
 
         if copy_champion == 1 {
             let champion: Option<Organism> =
@@ -132,8 +124,7 @@ impl Specie {
 
     /// Choice a new representative of the specie at random
     pub fn choose_new_representative(&mut self) {
-        self.representative = rand::thread_rng()
-            .choose(&self.organisms)
+        self.representative = self.organisms.choose(&mut rand::thread_rng())
             .unwrap()
             .genome
             .clone();
@@ -179,14 +170,10 @@ impl Specie {
         population_organisms: &[Organism],
     ) -> Organism {
         let mut rng = rand::thread_rng();
-        if rand::random::<f64>() > INTERSPECIE_MATE_PROBABILITY {
-            let selected_mate =
-                rand::seq::sample_iter(&mut rng, 0..self.organisms.len(), 1).unwrap()[0];
-            organism.mate(&self.organisms[selected_mate])
+        if rng.gen_bool(INTERSPECIE_MATE_PROBABILITY) {
+            organism.mate(&population_organisms.choose(&mut rng).unwrap())
         } else {
-            let selected_mate =
-                rand::seq::sample_iter(&mut rng, 0..population_organisms.len(), 1).unwrap()[0];
-            organism.mate(&population_organisms[selected_mate])
+            organism.mate(&self.organisms.choose(&mut rng).unwrap())
         }
     }
 }
@@ -199,7 +186,7 @@ mod tests {
 
     #[test]
     fn specie_should_return_correct_average_fitness() {
-        let mut specie = Specie::new(Genome::default());
+        let mut specie = Species::new(Genome::default());
         let mut organism1 = Organism::new(Genome::default());
         organism1.fitness = 10f64;
 

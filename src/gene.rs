@@ -1,70 +1,51 @@
 extern crate rand;
 
-use rand::Closed01;
-use std::cmp::Ordering;
 
-/// A connection Gene
-#[derive(Debug, Copy, Clone)]
-#[cfg_attr(feature = "telemetry", derive(Serialize))]
-pub struct Gene {
-    /// The id of the source neuron
-    pub source_id: usize,
-    /// The id of the target neuron
-    pub target_id: usize,
-    /// The connection strength
-    pub weight: f64,
-    /// Whether the connection is enabled or not
-    pub enabled: bool,
-    /// Whether the connection is a bias input or not
-    pub bias: bool,
-}
+//
+// impl Eq for ConnectionGene {}
+//
+// impl PartialEq for ConnectionGene {
+//     fn eq(&self, other: &ConnectionGene) -> bool {
+//         self.source_id == other.source_id && self.target_id == other.target_id
+//     }
+// }
+//
+// impl Ord for ConnectionGene {
+//     fn cmp(&self, other: &ConnectionGene) -> Ordering {
+//         if self == other {
+//             Ordering::Equal
+//         } else if self.source_id == other.source_id {
+//             if self.target_id > other.target_id {
+//                 Ordering::Greater
+//             } else {
+//                 Ordering::Less
+//             }
+//         } else if self.source_id > other.source_id {
+//             Ordering::Greater
+//         } else {
+//             Ordering::Less
+//         }
+//     }
+// }
+//
+// impl PartialOrd for ConnectionGene {
+//     fn partial_cmp(&self, other: &ConnectionGene) -> Option<Ordering> {
+//         Some(self.cmp(other))
+//     }
+// }
 
-impl Eq for Gene {}
-
-impl PartialEq for Gene {
-    fn eq(&self, other: &Gene) -> bool {
-        self.source_id == other.source_id && self.target_id == other.target_id
-    }
-}
-
-impl Ord for Gene {
-    fn cmp(&self, other: &Gene) -> Ordering {
-        if self == other {
-            Ordering::Equal
-        } else if self.source_id == other.source_id {
-            if self.target_id > other.target_id {
-                Ordering::Greater
-            } else {
-                Ordering::Less
-            }
-        } else if self.source_id > other.source_id {
-            Ordering::Greater
-        } else {
-            Ordering::Less
-        }
-    }
-}
-
-impl PartialOrd for Gene {
-    fn partial_cmp(&self, other: &Gene) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Gene {
+impl ConnectionGene {
     /// Create a new gene with a specific connection
-    pub fn new(in_neuron_id: usize, out_neuron_id: usize) -> Gene {
-        Gene {
-            source_id: in_neuron_id,
-            target_id: out_neuron_id,
-            ..Gene::default()
+    pub fn new(source: usize, target: usize, innovation: usize) -> ConnectionGene {
+        ConnectionGene {
+            source_id: source,
+            target_id: target,
+            innovation_id: innovation,
+            weight: 1.,
+            enabled: true,
         }
     }
 
-    /// Generate a weight
-    pub fn generate_weight() -> f64 {
-        rand::random::<Closed01<f64>>().0 * 2f64 - 1f64
-    }
     /// Set gene enabled
     pub fn enable(&mut self) {
         self.enabled = true;
@@ -73,34 +54,19 @@ impl Gene {
     pub fn disable(&mut self) {
         self.enabled = false;
     }
-
     /// Toggle the enable state
     pub fn toggle_enabled(&mut self) { self.enabled = !self.enabled; }
-    /// Toggle the bias state
-    pub fn toggle_bias(&mut self) { self.bias = !self.bias; }
-}
-
-impl Default for Gene {
-    fn default() -> Gene {
-        Gene {
-            source_id: 1,
-            target_id: 1,
-            weight: Gene::generate_weight(),
-            enabled: true,
-            bias: false,
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn g(n_in: usize, n_out: usize) -> Gene {
-        Gene {
+    fn g(n_in: usize, n_out: usize) -> ConnectionGene {
+        ConnectionGene {
             source_id: n_in,
             target_id: n_out,
-            ..Gene::default()
+            ..ConnectionGene::default()
         }
     }
 

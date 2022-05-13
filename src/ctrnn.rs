@@ -8,7 +8,7 @@ use serde_json;
 
 #[allow(missing_docs)]
 #[derive(Debug)]
-pub struct CtrnnNeuralNetwork {
+pub struct CTRNN {
     /// Current state of neuron(j)
     pub y: Array1<f64>,
     /// τ - time constant ( t > 0 ). The neuron's speed of response to an external sensory signal.
@@ -18,26 +18,20 @@ pub struct CtrnnNeuralNetwork {
     pub wji: Array2<f64>,
     /// θ - bias of the neuron(j)
     pub theta: Array1<f64>,
-    /// I - external input to neuron(i)
-    pub i: Array1<f64>,
 }
 
-#[allow(missing_docs)]
-#[derive(Default, Clone, Copy, Debug)]
-pub struct Ctrnn {}
-
-impl Ctrnn {
-    /// Activate the NN
-    pub fn activate_nn(&self, time: f64, step_size: f64, nn: &CtrnnNeuralNetwork) -> Array1<f64> {
+impl CTRNN {
+    /// Activate the NN with given external input and return the output after forward integration.
+    pub fn activate_nn(&self, time: f64, step_size: f64, input: &Array1<f64>) -> Array1<f64> {
         let steps = (time / step_size) as usize;
-        let mut y = nn.y.clone();
+        let mut y = self.y.clone();
 
         #[cfg(feature = "ctrnn_telemetry")]
             Ctrnn::telemetry(&y);
 
         for _ in 0..steps {
-            let current_weights = (&y + &nn.theta).map(&Ctrnn::sigmoid);
-            y = &y + (((&nn.wji.dot(&current_weights)) - &y + &nn.i) / &nn.tau).map(&|j_value| step_size * j_value);
+            let current_weights = (&y + &self.theta).map(&CTRNN::sigmoid);
+            y = &y + (((&self.wji.dot(&current_weights)) - &y + input) / &self.tau).map(&|j_value| step_size * j_value);
             #[cfg(feature = "ctrnn_telemetry")]
                 Ctrnn::telemetry(&y);
         }

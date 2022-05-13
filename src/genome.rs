@@ -1,14 +1,27 @@
-use gene::Gene;
-use mutation::Mutation;
-use rand::{self, Closed01};
 use std::cmp;
+use rand::Rng;
+use rand::seq::SliceRandom;
+use cpython::py_class::CompareOp::Ge;
+use population::ConnectionGene;
 
-/// Vector of Genes
-/// Holds a count of last neuron added, similar to Innovation number
-#[derive(Default, Debug, Clone)]
+/// The neat genome is represented as a vector of connection genes.
+///
+/// For now only contains connection genes.
+/// Neuron index 0: Bias neuron
+/// Neuron indices 1..n_input+1 : Input neurons
+/// Neuron indices n_input+1..n_input+1+n_output : Output neurons
+/// Neuron
+#[derive(Debug, Clone)]
 pub struct Genome {
-    genes: Vec<Gene>,
+    /// All connections of the genome including connections from
+    /// and to input and output neurons and bias neuron.
+    connections: Vec<ConnectionGene>,
+    /// The id of the larges neuron of the genome.
     last_neuron_id: usize,
+    /// The number of input or sensor neurons.
+    n_inputs: usize,
+    /// The number of output  neurons.
+    n_outputs: usize,
 }
 
 const MUTATE_CONNECTION_WEIGHT: f64 = 0.90f64;
@@ -19,38 +32,64 @@ const MUTATE_CONNECTION_WEIGHT_PERTURBED_PROBABILITY: f64 = 0.90f64;
 const MUTATE_TOGGLE_BIAS: f64 = 0.01;
 
 impl Genome {
-    ///Add initial input and output neurons interconnected
-    pub fn new_initialized(input_neurons: usize, output_neurons: usize) -> Genome {
-        let mut genome = Genome::default();
-        for i in 0..input_neurons {
-            for o in 0..output_neurons {
-                genome.add_gene(Gene::new(i, input_neurons + o));
+    /// Initialize a genome as a fully connected input/output graph and a disconnected bias neuron.
+    pub fn new(inputs: usize, outputs: usize) -> Genome {
+        let mut genes: Vec<ConnectionGene> = Vec::default();
+        let mut c = 0;
+        for i in 1..inputs + 1 {
+            for o in inputs + 1..inputs + 1 + outputs {
+                genes.push(ConnectionGene::new(i, o, c));
+                c += 1;
             }
         }
-        genome
+        Genome { connections: genes, n_inputs: inputs, n_outputs: outputs, last_neuron_id: inputs + outputs }
     }
 
-    /// May add a connection &| neuron &| mutat connection weight &|
-    /// enable/disable connection
-    pub fn mutate(&mut self) {
-        if rand::random::<Closed01<f64>>().0 < MUTATE_ADD_CONNECTION || self.genes.is_empty() {
-            self.mutate_add_connection();
+    /// Mutate the genome.
+    /// - may connect two previously disconnected neurons with a random weight
+    /// - may add a neuron in an already existing connections splitting the existing connection into
+    ///   two. The old connection is disabled, the connection leading into the neuron will be
+    ///   initialized with weight 1, the connection from the new neuron will receive the weight of the
+    ///   disabled connection.
+    /// - may modify the weights of existing neurons.
+    pub fn mutate(&mut self, innovation_number: usize) {
+        let mut rng = rand::thread_rng();
+
+        // We know the genome is never empty at this point
+        if rng.gen_bool(MUTATE_ADD_NEURON) {
+            // find connection to be split
+            let gene = self.connections.choose_mut(&mut rng).unwrap();
+            self.last_neuron_id += 1;
+            gene.disable();
+
+            // generate new connections
+            let first = ConnectionGene { source_id: gene.source_id, target_id: self.last_neuron_id, weight: 1f64, enabled: true, innovation_id: innovation_number };
+            let second = ConnectionGene { source_id: self.last_neuron_id, target_id: gene.target_id, weight: gene.weight, enabled: true, innovation_id: innovation_number + 1 };
+            self.connections.push(first);
+            self.connections.push(second);
         };
 
-        if rand::random::<Closed01<f64>>().0 < MUTATE_ADD_NEURON {
-            self.mutate_add_neuron();
+        // try to add a connection between two previously non-connected neurons.
+        if rng.gen_bool(MUTATE_ADD_CONNECTION) {
+            // fixme: find disconnected pair of neurons.
+            let source_id = 0;
+            let target_id = 0;
+
+            self.connections.push(ConnectionGene { source_id, target_id, weight: 1., enabled: true, innovation_id: innovation_number });
         };
 
-        if rand::random::<Closed01<f64>>().0 < MUTATE_CONNECTION_WEIGHT {
-            self.mutate_connection_weight();
+        if rng.gen_bool(MUTATE_CONNECTION_WEIGHT) {
+            for gene in &mut self.connections {
+                if rng.gen_bool(MUTATE_CONNECTION_WEIGHT_PERTURBED_PROBABILITY) {
+                    gene.weight += rng.gen_range(-1.0..1.0);
+                } else {
+                    gene.weight = rng.gen_range(-1.0..1.0);
+                }
+            }
         };
 
-        if rand::random::<Closed01<f64>>().0 < MUTATE_TOGGLE_EXPRESSION {
-            self.mutate_toggle_expression();
-        };
-
-        if rand::random::<Closed01<f64>>().0 < MUTATE_TOGGLE_BIAS {
-            self.mutate_toggle_bias();
+        if rng.gen_bool(MUTATE_TOGGLE_EXPRESSION) {
+            self.connections.choose_mut(&mut rng).unwrap().toggle_enabled();
         };
     }
 
@@ -65,14 +104,14 @@ impl Genome {
 
     fn mate_genes(&self, other: &Genome) -> Genome {
         let mut genome = Genome::default();
-        for gene in &self.genes {
+        for gene in &self.connections {
             genome.add_gene({
                 //Only mate half of the genes randomly
                 if rand::random::<f64>() > 0.5f64 {
                     *gene
                 } else {
-                    match other.genes.binary_search(gene) {
-                        Ok(position) => other.genes[position],
+                    match other.connections.binary_search(gene) {
+                        Ok(position) => other.connections[position],
                         Err(_) => *gene,
                     }
                 }
@@ -80,169 +119,45 @@ impl Genome {
         }
         genome
     }
-    /// Get vector of all genes in this genome
-    pub fn get_genes(&self) -> &Vec<Gene> {
-        &self.genes
-    }
-
-    /// only allow connected nodes
-    #[deprecated(since = "0.3.0", note = "please use `add_gene` instead")]
-    pub fn inject_gene(&mut self, in_neuron_id: usize, out_neuron_id: usize, weight: f64) {
-        self.add_gene(Gene {
-            source_id: in_neuron_id,
-            target_id: out_neuron_id,
-            weight,
-            enabled: true,
-            bias: false,
-        });
-    }
-    /// Number of genes
-    pub fn len(&self) -> usize {
-        self.last_neuron_id + 1 // first neuron id is 0
-    }
-    /// is genome empty
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    fn mutate_add_connection(&mut self) {
-        let mut rng = rand::thread_rng();
-        let neuron_ids_to_connect = {
-            if self.last_neuron_id == 0 {
-                vec![0, 0]
-            } else {
-                rand::seq::sample_iter(&mut rng, 0..self.last_neuron_id + 1, 2).unwrap()
-            }
-        };
-        self.add_connection(neuron_ids_to_connect[0], neuron_ids_to_connect[1]);
-    }
-
-    fn mutate_connection_weight(&mut self) {
-        for gene in &mut self.genes {
-            <dyn Mutation>::connection_weight(
-                gene,
-                rand::random::<f64>() < MUTATE_CONNECTION_WEIGHT_PERTURBED_PROBABILITY,
-            );
-        }
-    }
-
-    fn mutate_toggle_expression(&mut self) {
-        let mut rng = rand::thread_rng();
-        let selected_gene = rand::seq::sample_iter(&mut rng, 0..self.genes.len(), 1).unwrap()[0];
-        <dyn Mutation>::toggle_expression(&mut self.genes[selected_gene]);
-    }
-
-    fn mutate_toggle_bias(&mut self) {
-        let mut rng = rand::thread_rng();
-        let selected_gene = rand::seq::sample_iter(&mut rng, 0..self.genes.len(), 1).unwrap()[0];
-        <dyn Mutation>::toggle_bias(&mut self.genes[selected_gene]);
-    }
-
-    fn mutate_add_neuron(&mut self) {
-        let (gene1, gene2) = {
-            let mut rng = rand::thread_rng();
-            let selected_gene =
-                rand::seq::sample_iter(&mut rng, 0..self.genes.len(), 1).unwrap()[0];
-            let gene = &mut self.genes[selected_gene];
-            self.last_neuron_id += 1;
-            <dyn Mutation>::add_neuron(gene, self.last_neuron_id)
-        };
-        self.add_gene(gene1);
-        self.add_gene(gene2);
-    }
-
-    fn add_connection(&mut self, in_neuron_id: usize, out_neuron_id: usize) {
-        let gene = <dyn Mutation>::add_connection(in_neuron_id, out_neuron_id);
-        self.add_gene(gene);
-    }
 
     /// Add a new gene and checks if is allowed. Only can connect next neuron or already connected
     /// neurons.
-    pub fn add_gene(&mut self, gene: Gene) {
-        let max_neuron_id = self.last_neuron_id + 1;
+    // fn add_connection(&mut self, source_id: usize, target_id: usize) {
+    //     let gene = ConnectionGene::new(source_id, target_id);
+    //     let max_neuron_id = self.last_neuron_id + 1;
+    //
+    //     if gene.source_id == gene.target_id && gene.source_id > max_neuron_id {
+    //         panic!(
+    //             "Try to create a gene neuron unconnected, max neuron id {}, {} -> {}",
+    //             max_neuron_id,
+    //             gene.source_id,
+    //             gene.target_id
+    //         );
+    //     }
+    //
+    //     if gene.source_id > self.last_neuron_id {
+    //         self.last_neuron_id = gene.source_id;
+    //     }
+    //     if gene.target_id > self.last_neuron_id {
+    //         self.last_neuron_id = gene.target_id;
+    //     }
+    //     match self.connections.binary_search(&gene) {
+    //         Ok(pos) => self.connections[pos].enable(),
+    //         Err(_) => self.connections.push(gene),
+    //     }
+    //     self.connections.sort();
+    // }
 
-        if gene.source_id == gene.target_id && gene.source_id > max_neuron_id {
-            panic!(
-                "Try to create a gene neuron unconnected, max neuron id {}, {} -> {}",
-                max_neuron_id,
-                gene.source_id,
-                gene.target_id
-            );
-        }
-
-        if gene.source_id > self.last_neuron_id {
-            self.last_neuron_id = gene.source_id;
-        }
-        if gene.target_id > self.last_neuron_id {
-            self.last_neuron_id = gene.target_id;
-        }
-        match self.genes.binary_search(&gene) {
-            Ok(pos) => self.genes[pos].enable(),
-            Err(_) => self.genes.push(gene),
-        }
-        self.genes.sort();
-    }
-
-    /// Compare another Genome for species equality
-    // TODO This should be impl Eq
-    pub fn is_same_specie(&self, other: &Genome) -> bool {
-        self.compatibility_distance(other) < 1f64
-    }
-
-    /// Total weigths of all genes
+    /// Total weights of all genes
     pub fn total_weights(&self) -> f64 {
         let mut total = 0f64;
-        for gene in &self.genes {
+        for gene in &self.connections {
             total += gene.weight;
         }
         total
     }
 
-    /// Total num genes
-    // TODO len() is enough
-    pub fn total_genes(&self) -> usize {
-        self.genes.len()
-    }
 
-    // http://nn.cs.utexas.edu/downloads/papers/stanley.ec02.pdf - Pag. 110
-    // I have considered disjoint and excess genes as the same
-    fn compatibility_distance(&self, other: &Genome) -> f64 {
-        // TODO: optimize this method
-        let c2 = 1f64;
-        let c3 = 0.2f64;
-
-        // Number of excess
-        let n1 = self.genes.len();
-        let n2 = other.genes.len();
-        let n = cmp::max(n1, n2);
-
-        if n == 0 {
-            return 0f64; // no genes in any genome, the genomes are equal
-        }
-
-        let matching_genes = self
-            .genes
-            .iter()
-            .filter(|i1_gene| other.genes.contains(i1_gene))
-            .collect::<Vec<&Gene>>();
-        let n3 = matching_genes.len();
-
-        // Disjoint / excess genes
-        let d = n1 + n2 - (2 * n3);
-
-        // average weight differences of matching genes
-        let mut w = matching_genes.iter().fold(0f64, |acc, &m_gene| {
-            acc + (m_gene.weight
-                - &other.genes[other.genes.binary_search(m_gene).unwrap()].weight)
-                .abs()
-        });
-
-        // if no matching genes then are completely different
-        w = if n3 == 0 { 1f64 } else { w / n3 as f64 };
-
-        // compatibility distance
-        (c2 * d as f64 / n as f64) + c3 * w
-    }
 }
 
 #[cfg(test)]
@@ -252,7 +167,7 @@ mod tests {
     #[test]
     fn mutation_connection_weight() {
         let mut genome = Genome::default();
-        genome.add_gene(Gene { source_id: 0, target_id: 0, weight: 1f64, enabled: true, bias: false });
+        genome.add_gene(ConnectionGene { source_id: 0, target_id: 0, weight: 1f64, enabled: true, bias: false });
         let orig_gene = genome.genes[0];
         genome.mutate_connection_weight();
         // These should not be same size
@@ -284,38 +199,38 @@ mod tests {
     #[should_panic(expected = "Try to create a gene neuron unconnected, max neuron id 1, 2 -> 2")]
     fn try_to_inject_a_unconnected_neuron_gene_should_panic() {
         let mut genome1 = Genome::default();
-        genome1.add_gene(Gene { source_id: 2, target_id: 2, weight: 0.5f64, enabled: true, bias: false });
+        genome1.add_gene(ConnectionGene { source_id: 2, target_id: 2, weight: 0.5f64, enabled: true, bias: false });
     }
 
     #[test]
     fn two_genomes_without_differences_should_be_in_same_specie() {
         let mut genome1 = Genome::default();
-        genome1.add_gene(Gene { source_id: 0, target_id: 0, weight: 1f64, enabled: true, bias: false });
-        genome1.add_gene(Gene { source_id: 0, target_id: 1, weight: 1f64, enabled: true, bias: false });
+        genome1.add_gene(ConnectionGene { source_id: 0, target_id: 0, weight: 1f64, enabled: true, bias: false });
+        genome1.add_gene(ConnectionGene { source_id: 0, target_id: 1, weight: 1f64, enabled: true, bias: false });
         let mut genome2 = Genome::default();
-        genome2.add_gene(Gene { source_id: 0, target_id: 0, weight: 0f64, enabled: true, bias: false });
-        genome2.add_gene(Gene { source_id: 0, target_id: 1, weight: 0f64, enabled: true, bias: false });
-        genome2.add_gene(Gene { source_id: 0, target_id: 2, weight: 0f64, enabled: true, bias: false });
-        assert!(genome1.is_same_specie(&genome2));
+        genome2.add_gene(ConnectionGene { source_id: 0, target_id: 0, weight: 0f64, enabled: true, bias: false });
+        genome2.add_gene(ConnectionGene { source_id: 0, target_id: 1, weight: 0f64, enabled: true, bias: false });
+        genome2.add_gene(ConnectionGene { source_id: 0, target_id: 2, weight: 0f64, enabled: true, bias: false });
+        assert!(genome1.is_same_species(&genome2));
     }
 
     #[test]
     fn two_genomes_with_enough_difference_should_be_in_different_species() {
         let mut genome1 = Genome::default();
-        genome1.add_gene(Gene { source_id: 0, target_id: 0, weight: 1f64, enabled: true, bias: false });
-        genome1.add_gene(Gene { source_id: 0, target_id: 1, weight: 1f64, enabled: true, bias: false });
+        genome1.add_gene(ConnectionGene { source_id: 0, target_id: 0, weight: 1f64, enabled: true, bias: false });
+        genome1.add_gene(ConnectionGene { source_id: 0, target_id: 1, weight: 1f64, enabled: true, bias: false });
         let mut genome2 = Genome::default();
-        genome2.add_gene(Gene { source_id: 0, target_id: 0, weight: 5f64, enabled: true, bias: false });
-        genome2.add_gene(Gene { source_id: 0, target_id: 1, weight: 5f64, enabled: true, bias: false });
-        genome2.add_gene(Gene { source_id: 0, target_id: 2, weight: 1f64, enabled: true, bias: false });
-        genome2.add_gene(Gene { source_id: 0, target_id: 3, weight: 1f64, enabled: true, bias: false });
-        assert!(!genome1.is_same_specie(&genome2));
+        genome2.add_gene(ConnectionGene { source_id: 0, target_id: 0, weight: 5f64, enabled: true, bias: false });
+        genome2.add_gene(ConnectionGene { source_id: 0, target_id: 1, weight: 5f64, enabled: true, bias: false });
+        genome2.add_gene(ConnectionGene { source_id: 0, target_id: 2, weight: 1f64, enabled: true, bias: false });
+        genome2.add_gene(ConnectionGene { source_id: 0, target_id: 3, weight: 1f64, enabled: true, bias: false });
+        assert!(!genome1.is_same_species(&genome2));
     }
 
     #[test]
     fn already_existing_gene_should_be_not_duplicated() {
         let mut genome1 = Genome::default();
-        genome1.add_gene(Gene { source_id: 0, target_id: 0, weight: 1f64, enabled: true, bias: false });
+        genome1.add_gene(ConnectionGene { source_id: 0, target_id: 0, weight: 1f64, enabled: true, bias: false });
         genome1.add_connection(0, 0);
         assert_eq!(genome1.genes.len(), 1);
         assert!((genome1.get_genes()[0].weight - 1f64).abs() < f64::EPSILON);
@@ -324,7 +239,7 @@ mod tests {
     #[test]
     fn adding_an_existing_gene_disabled_should_enable_original() {
         let mut genome1 = Genome::default();
-        genome1.add_gene(Gene { source_id: 0, target_id: 1, weight: 0f64, enabled: true, bias: false });
+        genome1.add_gene(ConnectionGene { source_id: 0, target_id: 1, weight: 0f64, enabled: true, bias: false });
         genome1.mutate_add_neuron();
         assert!(!genome1.genes[0].enabled);
         assert_eq!(genome1.genes.len(), 3);
@@ -337,36 +252,37 @@ mod tests {
     #[test]
     fn genomes_with_same_genes_with_little_differences_on_weight_should_be_in_same_specie() {
         let mut genome1 = Genome::default();
-        genome1.add_gene(Gene { source_id: 0, target_id: 0, weight: 16f64, enabled: true, bias: false });
+        genome1.add_gene(ConnectionGene { source_id: 0, target_id: 0, weight: 16f64, enabled: true, bias: false });
         let mut genome2 = Genome::default();
-        genome2.add_gene(Gene { source_id: 0, target_id: 0, weight: 16.1f64, enabled: true, bias: false });
-        assert!(genome1.is_same_specie(&genome2));
+        genome2.add_gene(ConnectionGene { source_id: 0, target_id: 0, weight: 16.1f64, enabled: true, bias: false });
+        assert!(genome1.is_same_species(&genome2));
     }
 
     #[test]
     fn genomes_with_same_genes_with_big_differences_on_weight_should_be_in_other_specie() {
         let mut genome1 = Genome::default();
-        genome1.add_gene(Gene { source_id: 0, target_id: 0, weight: 5f64, enabled: true, bias: false });
+        genome1.add_gene(ConnectionGene { source_id: 0, target_id: 0, weight: 5f64, enabled: true, bias: false });
         let mut genome2 = Genome::default();
-        genome2.add_gene(Gene { source_id: 0, target_id: 0, weight: 15f64, enabled: true, bias: false });
-        assert!(!genome1.is_same_specie(&genome2));
+        genome2.add_gene(ConnectionGene { source_id: 0, target_id: 0, weight: 15f64, enabled: true, bias: false });
+        assert!(!genome1.is_same_species(&genome2));
     }
 
     #[test]
     fn genomes_initialized_has_correct_neurons() {
-        let genome1 = Genome::new_initialized(2, 3);
+        let genome1 = Genome::new(2, 3);
         assert_eq!(genome1.total_genes(), 6);
-        assert_eq!(genome1.genes[0].source_id, 0);
-        assert_eq!(genome1.genes[0].target_id, 2);
-        assert_eq!(genome1.genes[1].source_id, 0);
-        assert_eq!(genome1.genes[1].target_id, 3);
-        assert_eq!(genome1.genes[2].source_id, 0);
-        assert_eq!(genome1.genes[2].target_id, 4);
-        assert_eq!(genome1.genes[3].source_id, 1);
-        assert_eq!(genome1.genes[3].target_id, 2);
-        assert_eq!(genome1.genes[4].source_id, 1);
-        assert_eq!(genome1.genes[4].target_id, 3);
-        assert_eq!(genome1.genes[5].source_id, 1);
-        assert_eq!(genome1.genes[5].target_id, 4);
+        assert_eq!(genome1.connections[0].source_id, 0);
+        assert_eq!(genome1.connections[0].target_id, 2);
+        assert_eq!(genome1.connections[1].source_id, 0);
+        assert_eq!(genome1.connections[1].target_id, 3);
+        assert_eq!(genome1.connections[2].source_id, 0);
+        assert_eq!(genome1.connections[2].target_id, 4);
+        assert_eq!(genome1.connections[3].source_id, 1);
+        assert_eq!(genome1.connections[3].target_id, 2);
+        assert_eq!(genome1.connections[4].source_id, 1);
+        assert_eq!(genome1.connections[4].target_id, 3);
+        assert_eq!(genome1.connections[5].source_id, 1);
+        assert_eq!(genome1.connections[5].target_id, 4);
     }
 }
+

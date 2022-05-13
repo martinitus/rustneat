@@ -6,7 +6,7 @@ use std::cmp;
 use std::cmp::Ordering;
 
 /// An organism is a Genome with fitness.
-/// Also maitain a fitenss measure of the organism
+/// Also maintain a fitness measure of the organism.
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct Organism {
@@ -35,14 +35,14 @@ impl PartialOrd for Organism {
 }
 
 impl Organism {
-    /// Create a new organmism form a single genome.
+    /// Create a new organism from a single genome.
     pub fn new(genome: Genome) -> Organism {
         Organism {
             genome: genome,
             fitness: 0f64,
         }
     }
-    /// Return a new Orgnaism by mutating this Genome and fitness of zero
+    /// Return a new organism by mutating this Genome and fitness of zero
     pub fn mutate(&self) -> Organism {
         let mut new_genome = self.genome.clone();
         new_genome.mutate();
@@ -113,7 +113,7 @@ impl Organism {
 }
 
 #[cfg(test)]
-use gene::Gene;
+use gene::ConnectionGene;
 
 
 #[cfg(test)]
@@ -125,7 +125,7 @@ mod tests {
     #[test]
     fn should_propagate_signal_without_hidden_layers() {
         let mut organism = Organism::new(Genome::default());
-        organism.genome.add_gene(Gene { source_id: 0, target_id: 1, weight: 1f64, enabled: true, bias: false });
+        organism.genome.add_gene(ConnectionGene { source_id: 0, target_id: 1, weight: 1f64, enabled: true, bias: false });
         let sensors = vec![1.0];
         let mut output = vec![0f64];
         organism.activate(sensors, &mut output);
@@ -134,7 +134,7 @@ mod tests {
         let mut organism = Organism::new(Genome::default());
         organism
             .genome
-            .add_gene(Gene { source_id: 0, target_id: 1, weight: -2f64, enabled: true, bias: false });
+            .add_gene(ConnectionGene { source_id: 0, target_id: 1, weight: -2f64, enabled: true, bias: false });
         let sensors = vec![1f64];
         let mut output = vec![0f64];
         organism.activate(sensors, &mut output);
@@ -148,9 +148,9 @@ mod tests {
     #[test]
     fn should_propagate_signal_over_hidden_layers() {
         let mut organism = Organism::new(Genome::default());
-        organism.genome.add_gene(Gene { source_id: 0, target_id: 1, weight: 0f64, enabled: true, bias: false });
-        organism.genome.add_gene(Gene { source_id: 0, target_id: 2, weight: 5f64, enabled: true, bias: false });
-        organism.genome.add_gene(Gene { source_id: 2, target_id: 1, weight: 5f64, enabled: true, bias: false });
+        organism.genome.add_gene(ConnectionGene { source_id: 0, target_id: 1, weight: 0f64, enabled: true, bias: false });
+        organism.genome.add_gene(ConnectionGene { source_id: 0, target_id: 2, weight: 5f64, enabled: true, bias: false });
+        organism.genome.add_gene(ConnectionGene { source_id: 2, target_id: 1, weight: 5f64, enabled: true, bias: false });
         let sensors = vec![0f64];
         let mut output = vec![0f64];
         organism.activate(sensors, &mut output);
@@ -160,9 +160,9 @@ mod tests {
     #[test]
     fn should_work_with_cyclic_networks() {
         let mut organism = Organism::new(Genome::default());
-        organism.genome.add_gene(Gene { source_id: 0, target_id: 1, weight: 2f64, enabled: true, bias: false });
-        organism.genome.add_gene(Gene { source_id: 1, target_id: 2, weight: 2f64, enabled: true, bias: false });
-        organism.genome.add_gene(Gene { source_id: 2, target_id: 1, weight: 2f64, enabled: true, bias: false });
+        organism.genome.add_gene(ConnectionGene { source_id: 0, target_id: 1, weight: 2f64, enabled: true, bias: false });
+        organism.genome.add_gene(ConnectionGene { source_id: 1, target_id: 2, weight: 2f64, enabled: true, bias: false });
+        organism.genome.add_gene(ConnectionGene { source_id: 2, target_id: 1, weight: 2f64, enabled: true, bias: false });
         let mut output = vec![0f64];
         organism.activate(vec![10f64], &mut output);
         assert!(output[0] > 0.9, "{:#?} is not bigger than 0.9", output[0]);
@@ -170,13 +170,13 @@ mod tests {
         let mut organism = Organism::new(Genome::default());
         organism
             .genome
-            .add_gene(Gene { source_id: 0, target_id: 1, weight: -2f64, enabled: true, bias: false });
+            .add_gene(ConnectionGene { source_id: 0, target_id: 1, weight: -2f64, enabled: true, bias: false });
         organism
             .genome
-            .add_gene(Gene { source_id: 1, target_id: 2, weight: -2f64, enabled: true, bias: false });
+            .add_gene(ConnectionGene { source_id: 1, target_id: 2, weight: -2f64, enabled: true, bias: false });
         organism
             .genome
-            .add_gene(Gene { source_id: 2, target_id: 1, weight: -2f64, enabled: true, bias: false });
+            .add_gene(ConnectionGene { source_id: 2, target_id: 1, weight: -2f64, enabled: true, bias: false });
         let mut output = vec![0f64];
         organism.activate(vec![1f64], &mut output);
         assert!(output[0] < 0.1, "{:?} is not smaller than 0.1", output[0]);
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn activate_organims_sensor_without_enough_neurons_should_ignore_it() {
         let mut organism = Organism::new(Genome::default());
-        organism.genome.add_gene(Gene { source_id: 0, target_id: 1, weight: 1f64, enabled: true, bias: false });
+        organism.genome.add_gene(ConnectionGene { source_id: 0, target_id: 1, weight: 1f64, enabled: true, bias: false });
         let sensors = vec![0f64, 0f64, 0f64];
         let mut output = vec![0f64];
         organism.activate(sensors, &mut output);
@@ -194,7 +194,7 @@ mod tests {
     #[test]
     fn should_allow_multiple_output() {
         let mut organism = Organism::new(Genome::default());
-        organism.genome.add_gene(Gene { source_id: 0, target_id: 1, weight: 1f64, enabled: true, bias: false });
+        organism.genome.add_gene(ConnectionGene { source_id: 0, target_id: 1, weight: 1f64, enabled: true, bias: false });
         let sensors = vec![0f64];
         let mut output = vec![0f64, 0f64];
         organism.activate(sensors, &mut output);
@@ -203,17 +203,17 @@ mod tests {
     #[test]
     fn should_be_able_to_get_matrix_representation_of_the_neuron_connections() {
         let mut organism = Organism::new(Genome::default());
-        organism.genome.add_gene(Gene { source_id: 0, target_id: 1, weight: 1f64, enabled: true, bias: false });
+        organism.genome.add_gene(ConnectionGene { source_id: 0, target_id: 1, weight: 1f64, enabled: true, bias: false });
         organism
             .genome
-            .add_gene(Gene { source_id: 1, target_id: 2, weight: 0.5f64, enabled: true, bias: false });
+            .add_gene(ConnectionGene { source_id: 1, target_id: 2, weight: 0.5f64, enabled: true, bias: false });
         organism
             .genome
-            .add_gene(Gene { source_id: 2, target_id: 1, weight: 0.5f64, enabled: true, bias: false });
+            .add_gene(ConnectionGene { source_id: 2, target_id: 1, weight: 0.5f64, enabled: true, bias: false });
         organism
             .genome
-            .add_gene(Gene { source_id: 2, target_id: 2, weight: 0.75f64, enabled: true, bias: false });
-        organism.genome.add_gene(Gene { source_id: 1, target_id: 0, weight: 1f64, enabled: true, bias: false });
+            .add_gene(ConnectionGene { source_id: 2, target_id: 2, weight: 0.75f64, enabled: true, bias: false });
+        organism.genome.add_gene(ConnectionGene { source_id: 1, target_id: 0, weight: 1f64, enabled: true, bias: false });
         assert_eq!(
             organism.get_weights(),
             array![[0.0, 1.0, 0.0], [1.0, 0.0, 0.5], [0.0, 0.5, 0.75]]
@@ -223,7 +223,7 @@ mod tests {
     #[test]
     fn should_not_raise_exception_if_less_neurons_than_required() {
         let mut organism = Organism::new(Genome::default());
-        organism.genome.add_gene(Gene { source_id: 0, target_id: 1, weight: 1f64, enabled: true, bias: false });
+        organism.genome.add_gene(ConnectionGene { source_id: 0, target_id: 1, weight: 1f64, enabled: true, bias: false });
         let sensors = vec![0f64, 0f64, 0f64];
         let mut output = vec![0f64, 0f64, 0f64];
         organism.activate(sensors, &mut output);

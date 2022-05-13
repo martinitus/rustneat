@@ -36,7 +36,7 @@ mod test {
     #[test]
     fn should_be_able_to_generate_a_population() {
         let population = Population::create_population(150);
-        assert!(population.size() == 150);
+        assert_eq!(population.size(), 150);
     }
 
     #[test]
@@ -44,7 +44,7 @@ mod test {
         let mut population = Population::create_population(1);
         population.evolve();
         let genome = &population.get_organisms()[0].genome;
-        assert_eq!(genome.total_genes(), 1);
+        assert_eq!(genome.len(), 1);
         assert_ne!(genome.total_weights(), 0f64);
     }
 
@@ -53,7 +53,7 @@ mod test {
         let mut population = Population::create_population(10);
         let mut environment = MyEnvironment;
         population.evaluate_in(&mut environment);
-        assert!(population.get_organisms()[0].fitness == 0.1234f64);
+        assert_eq!(population.get_organisms()[0].fitness, 0.1234f64);
     }
 
     #[test]

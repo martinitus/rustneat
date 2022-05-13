@@ -1,282 +1,259 @@
-use conv::prelude::*;
-use environment::Environment;
-use genome::Genome;
-use organism::Organism;
-use std::cmp::Ordering;
-#[cfg(feature = "telemetry")]
-use std::time::{SystemTime, UNIX_EPOCH};
+use ndarray::prelude::*;
+use lazycell::LazyCell;
+use std::cmp::max;
 
-#[cfg(feature = "telemetry")]
-use rusty_dashed;
-
-#[cfg(feature = "telemetry")]
-use serde_json;
-
-use specie::Specie;
-use species_evaluator::SpeciesEvaluator;
-
-/// All species in the network
-#[derive(Debug)]
-pub struct Population {
-    /// container of species
-    pub species: Vec<Specie>,
-    champion_fitness: f64,
-    epochs_without_improvements: usize,
-    /// champion of the population
-    pub champion: Option<Organism>,
+/// A connection Gene
+#[derive(Debug, Clone, PartialEq)]
+pub struct Connection {
+    /// The id of the source neuron
+    pub source_id: usize,
+    /// The id of the target neuron
+    pub target_id: usize,
+    /// The connection strength
+    pub weight: f64,
+    /// Whether the connection is enabled or not
+    pub enabled: bool,
+    /// The innovation number of that gene
+    pub innovation_number: usize,
 }
+
+
+/// The neat genome is represented as a vector of connection genes.
+///
+/// Neuron index 0: Bias neuron. counts as input neuron.
+/// Neuron indices 1..n_input+1 : Input neurons
+/// Neuron indices n_input+1..n_input+1+n_output : Output neurons
+#[derive(Debug, Clone, PartialEq)]
+pub struct Genome {
+    /// All connections of the genome including connections from
+    /// and to input and output neurons and bias neuron.
+    /// input_id, output_id, innovation_number.
+    /// Ordered by innovation number!
+    connections: Vec<Connection>,
+}
+
+impl Genome {
+    /// Get the connection between given source and target neuron.
+    pub fn connection(&self, source: usize, target: usize) -> Option<&'_ Connection> {
+        unimplemented!();
+        None
+    }
+
+    /// Get the connection with given innovation number.
+    pub fn innovation(&self, id: usize) -> Option<&'_ Connection> {
+        if id > self.connections.last().unwrap().innovation_number {
+            return None;
+        }
+
+        match self.connections.binary_search_by_key(&id, move |conn| conn.innovation_number) {
+            Ok(pos) => Some(&self.connections[pos]),
+            Err(_) => None
+        }
+    }
+
+    /// > Genes that do not match are either disjoint or excess, depending on whether they occur
+    /// > within or outside the range of the other parent’s innovation
+    /// > numbers. They represent structure that is not present in the other genome.
+    /// [Pag. 110, NEAT](http://nn.cs.utexas.edu/downloads/papers/stanley.ec02.pdf)
+    pub fn excess(&self, other: &Genome) -> impl Iterator<Item=&'_ Connection> {
+        let threshold = other.connections.last().unwrap().innovation_number;
+        self.connections
+            .iter()
+            .filter(move |&gene| gene.innovation_number > threshold)
+    }
+    pub fn disjoint(&self, other: &Genome) -> impl Iterator<Item=&'_ Connection> {
+        unimplemented!();
+        self.connections.iter()
+    }
+    pub fn matching(&self, other: &Genome) -> impl Iterator<Item=&'_ Connection> {
+        unimplemented!();
+        self.connections.iter()
+    }
+
+    /// δ = (c1 * E)/N + (c2 * D)/N + c3*W
+    pub fn compatibility(&self, other: &Genome) -> f64 {
+        // From the original paper:
+        // c3 was increased [for DPNV experiment which had population size of 1000 instead of 150]
+        // to 3.0 in order to allow for finer distinctions between species based on weight
+        // differences (the larger population has room for more species).
+        let (c1, c2, c3) = (1., 1., 0.4);
+
+        // Excess count, Disjoint count, and average weight difference of matching genes.
+        let n_excess = self.excess(other).count();
+        let n_disjoint = self.disjoint(other).count();
+        let avg_difference = 0.;
+
+        // N, the number of genes in the larger genome, normalizes for genome size (N
+        // can be set to 1 if both genomes are small, i.e., consist of fewer than 20 genes)
+        let N = max(self.connections.len(), other.connections.len());
+
+        return (c1 * n_excess as f64 + c2 * n_disjoint as f64) / N as f64 + c3 * avg_difference;
+    }
+}
+
+#[derive(Debug)]
+pub struct Species {
+    /// The representative defines whether another
+    /// individual belongs to the species or not.
+    representative: Genome,
+}
+
+impl Species {}
+
+// pub enum Mutation {
+//     AddEdge { source_id: int, target_id: int },
+//     AddNode(),
+//     ChangeWeight(),
+//     ToggleExpression(),
+// }
+
 
 const MAX_EPOCHS_WITHOUT_IMPROVEMENTS: usize = 10;
 
+/// A collection of all genomes
+///
+/// - Has full ownership of all genomes.
+/// - Hides storage organization of genomes.
+#[derive(Debug)]
+pub struct Population {
+    /// Outer vector is for the individuals of the population,
+    /// Inner vector holds the genes of the respective individual.
+    genomes: Vec<Genome>,
+    /// The number of input or sensor neurons.
+    n_inputs: usize,
+    /// The number of output  neurons.
+    n_outputs: usize,
+
+    species: Vec<Species>,
+    // champion_fitness: f64,
+    // epochs_without_improvements: usize,
+    // /// champion of the population
+    // pub champion: Option<Organism>,
+}
+
 impl Population {
-    /// Create a new population of size X.
-    pub fn create_population(population_size: usize) -> Population {
-        let mut population = Population {
-            species: vec![],
-            champion_fitness: 0f64,
-            champion: None,
-            epochs_without_improvements: 0usize,
-        };
-
-        population.create_organisms(population_size);
-        population
+    pub fn new(size: usize, inputs: usize, outputs: usize) -> Population {
+        Population {
+            genomes: vec![Population::initial_genome(inputs, outputs); size],
+            n_inputs: inputs,
+            n_outputs: outputs,
+            //fixme: representative could also be a reference or an index into the genomes array?!
+            species: vec![Species { representative: Population::initial_genome(inputs, outputs) }],
+        }
     }
 
-    /// Create a population of size X with where every organisms has initial input and output neurons
-    pub fn create_population_initialized(
-        population_size: usize,
-        input_neurons: usize,
-        output_neurons: usize,
-    ) -> Population {
-        let mut population = Population {
-            species: vec![],
-            champion_fitness: 0f64,
-            champion: None,
-            epochs_without_improvements: 0usize,
-        };
-
-        population.create_organisms_initialized(population_size, input_neurons, output_neurons);
-        population
+    /// Build a fully connected initial (default) genome.
+    fn initial_genome(inputs: usize, outputs: usize) -> Genome {
+        let mut connections: Vec<Connection> = Vec::default();
+        let mut c = 0;
+        for i in 0..inputs + 1 {
+            for o in inputs + 1..inputs + 1 + outputs {
+                connections.push(Connection { source_id: i, target_id: o, weight: 1., enabled: true, innovation_number: c });
+                c += 1;
+            }
+        }
+        Genome { connections }
     }
 
-    /// Find total of all organisms in the population
-    pub fn size(&self) -> usize {
-        self.species
-            .iter()
-            .fold(0usize, |total, specie| total + specie.organisms.len())
+    // pub fn mutate() -> Vec<Mutation> {}
+
+    /// Allow iteration over all species within the population.
+    pub fn species(&self) -> &'_ Vec<Species> {
+        &self.species
+    }
+
+    // /// Allow iteration over the genomes of all individuals of the population.
+    pub fn genomes(&self) -> &'_ Vec<Genome> {
+        &self.genomes
+    }
+
+    /// The total number of individuals in the population.
+    pub fn len(&self) -> usize {
+        self.genomes.len()
     }
 
     /// Create offspring by mutation and mating. May create new species.
-    pub fn evolve(&mut self) {
-        self.generate_offspring();
+    /// returns the next generation of the population.
+    pub fn evolve(&self, fitness: &Array1<f32>) -> Population {
+        let average_fitness = fitness.sum() / fitness.len() as f32;
+        let n_organisms = self.len();
+
+        let species = self.species();
+        let genomes = self.genomes();
+
+        // if self.epochs_without_improvements > MAX_EPOCHS_WITHOUT_IMPROVEMENTS {
+        //     let mut best_species = self.get_best_species();
+        //     let num_of_selected = best_species.len();
+        //     for specie in &mut best_species {
+        //         specie.generate_offspring(
+        //             num_of_organisms.checked_div(num_of_selected).unwrap(),
+        //             &organisms,
+        //         );
+        //     }
+        //     self.epochs_without_improvements = 0;
+        //     return;
+        // }
+
+        // let organisms_by_average_fitness =
+        //     num_of_organisms.value_as::<f64>().unwrap() / total_average_fitness;
+
+        // for specie in &mut self.species {
+        //     let specie_fitness = specie.calculate_average_fitness();
+        //     let offspring_size = if total_average_fitness <= 0f64 {
+        //         specie.organisms.len()
+        //     } else {
+        //         (specie_fitness * organisms_by_average_fitness).round() as usize
+        //     };
+        //     if offspring_size > 0 {
+        //         specie.generate_offspring(offspring_size, &organisms);
+        //     } else {
+        //         specie.remove_organisms();
+        //     }
+        // }
+
+        // fixme build the next generation
+        let next_generation: Vec<Genome> = vec![];
+
+        Population { n_outputs: self.n_outputs, n_inputs: self.n_inputs, genomes: next_generation, species: vec![] }
     }
 
-    /// TODO
-    pub fn evaluate_in(&mut self, environment: &mut dyn Environment) {
-        let champion = SpeciesEvaluator::new(environment).evaluate(&mut self.species);
-
-        #[cfg(feature = "telemetry")]
-        telemetry!("fitness1", 1.0, format!("{}", self.champion_fitness));
-
-        if self.champion_fitness >= champion.fitness {
-            self.epochs_without_improvements += 1;
-        } else {
-            #[cfg(feature = "telemetry")]
-            telemetry!(
-                "network1",
-                1.0,
-                serde_json::to_string(&champion.genome.get_genes()).unwrap()
-            );
-            self.epochs_without_improvements = 0usize;
-            self.champion = Some(champion.clone());
-        }
-        self.champion_fitness = champion.fitness;
-    }
-
-    /// Return all organisms of the population
-    pub fn get_organisms(&self) -> Vec<Organism> {
-        self.species
-            .iter()
-            .flat_map(|specie| specie.organisms.clone())
-            .collect::<Vec<Organism>>()
-    }
-
-    /// How many iterations without improvement
-    pub fn epochs_without_improvements(&self) -> usize {
-        self.epochs_without_improvements
-    }
-
-    fn generate_offspring(&mut self) {
-        self.speciate();
-
-        let total_average_fitness = self.species.iter_mut().fold(0f64, |total, specie| {
-            total + specie.calculate_average_fitness()
-        });
-
-        let num_of_organisms = self.size();
-        let organisms = self.get_organisms();
-
-        if self.epochs_without_improvements > MAX_EPOCHS_WITHOUT_IMPROVEMENTS {
-            let mut best_species = self.get_best_species();
-            let num_of_selected = best_species.len();
-            for specie in &mut best_species {
-                specie.generate_offspring(
-                    num_of_organisms.checked_div(num_of_selected).unwrap(),
-                    &organisms,
-                );
-            }
-            self.epochs_without_improvements = 0;
-            return;
-        }
-
-        let organisms_by_average_fitness =
-            num_of_organisms.value_as::<f64>().unwrap() / total_average_fitness;
-
-        for specie in &mut self.species {
-            let specie_fitness = specie.calculate_average_fitness();
-            let offspring_size = if total_average_fitness <= 0f64 {
-                specie.organisms.len()
-            } else {
-                (specie_fitness * organisms_by_average_fitness).round() as usize
-            };
-            if offspring_size > 0 {
-                specie.generate_offspring(offspring_size, &organisms);
-            } else {
-                specie.remove_organisms();
-            }
-        }
-    }
-
-    fn get_best_species(&mut self) -> Vec<Specie> {
-        if self.species.len() <= 2 {
-            return self.species.clone();
-        }
-
-        self.species.sort_by(|specie1, specie2| {
-            if specie1.calculate_champion_fitness() > specie2.calculate_champion_fitness() {
-                Ordering::Greater
-            } else {
-                Ordering::Less
-            }
-        });
-
-        self.species[1..2].to_vec().clone()
-    }
-
-    fn speciate(&mut self) {
-        let organisms = &self.get_organisms();
-        self.species.retain(|specie| !specie.is_empty());
-
-        let mut next_specie_id = 0i64;
-
-        #[cfg(feature = "telemetry")]
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-
-        for specie in &mut self.species {
-            #[cfg(feature = "telemetry")]
-            telemetry!(
-                "species1",
-                1.0,
-                format!(
-                    "{{'id':{}, 'fitness':{}, 'organisms':{}, 'timestamp':'{:?}'}}",
-                    specie.id,
-                    specie.calculate_champion_fitness(),
-                    specie.organisms.len(),
-                    now
-                )
-            );
-
-            specie.choose_new_representative();
-
-            specie.remove_organisms();
-
-            specie.id = next_specie_id;
-            next_specie_id += 1;
-        }
-
-        for organism in organisms {
-            match self
-                .species
-                .iter_mut()
-                .find(|specie| specie.match_genome(organism))
-            {
-                Some(specie) => {
-                    specie.add(organism.clone());
-                }
-                None => {
-                    let mut specie = Specie::new(organism.genome.clone());
-                    specie.id = next_specie_id;
-                    specie.add(organism.clone());
-                    next_specie_id += 1;
-                    self.species.push(specie);
-                }
-            };
-        }
-        self.species.retain(|specie| !specie.is_empty());
-    }
-
-    fn create_organisms_initialized(
-        &mut self,
-        population_size: usize,
-        input_neurons: usize,
-        output_neurons: usize,
-    ) {
-        self.species = vec![];
-        let mut organisms = vec![];
-
-        while organisms.len() < population_size {
-            organisms.push(Organism::new(Genome::new_initialized(
-                input_neurons,
-                output_neurons,
-            )));
-        }
-
-        let mut specie = Specie::new(organisms.first().unwrap().genome.clone());
-        specie.organisms = organisms;
-        self.species.push(specie);
-    }
-
-    fn create_organisms(&mut self, population_size: usize) {
-        self.create_organisms_initialized(population_size, 0, 0);
-    }
+    // fn get_best_species(&mut self) -> Vec<Species> {
+    //     if self.species.len() <= 2 {
+    //         return self.species.clone();
+    //     }
+    //
+    //     self.species.sort_by(|specie1, specie2| {
+    //         if specie1.calculate_champion_fitness() > specie2.calculate_champion_fitness() {
+    //             Ordering::Greater
+    //         } else {
+    //             Ordering::Less
+    //         }
+    //     });
+    //
+    //     self.species[1..2].to_vec().clone()
+    // }
 }
-
-#[cfg(test)]
-use gene::Gene;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use genome::Genome;
-    use organism::Organism;
-    use specie::Specie;
 
     #[test]
-    fn population_should_be_able_to_speciate_genomes() {
-        let mut genome1 = Genome::default();
-        genome1.add_gene(Gene{ source_id:0, target_id: 0,weight: 1f64,enabled: true, bias: false});
-        genome1.add_gene(Gene{ source_id:0, target_id: 1,weight: 1f64,enabled: true, bias: false});
-        let mut genome2 = Genome::default();
-        genome1.add_gene(Gene{ source_id:0, target_id: 0,weight: 1f64,enabled: true, bias: false});
-        genome1.add_gene(Gene{ source_id:0, target_id: 1,weight: 1f64,enabled: true, bias: false});
-        genome2.add_gene(Gene{ source_id:1, target_id: 1,weight: 1f64,enabled: true, bias: false});
-        genome2.add_gene(Gene{ source_id:1, target_id: 0,weight: 1f64,enabled: true, bias: false});
+    fn new_population_should_contain_n_fully_connected_genomes() {
+        let p = Population::new(10, 3, 3);
+        assert_eq!(p.genomes().len(), 10);
+        let sample = &p.genomes()[0];
+        for g in p.genomes() {
+            assert_eq!(g, sample);
+        }
 
-        let mut population = Population::create_population(2);
-        let organisms = vec![Organism::new(genome1), Organism::new(genome2)];
-        let mut specie = Specie::new(organisms.first().unwrap().genome.clone());
-        specie.organisms = organisms;
-        population.species = vec![specie];
-        population.speciate();
-        assert_eq!(population.species.len(), 2usize);
+        assert_eq!(sample.connections.len(), 3 * 3 + 3)
+        // fixme: add test for connectivity?
     }
 
     #[test]
-    fn after_population_evolve_population_should_be_the_same() {
-        let mut population = Population::create_population(150);
-        for _ in 0..150 {
-            population.evolve();
-        }
-        assert!(population.size() == 150);
+    fn new_population_should_contain_one_species() {
+        let p = Population::new(10, 3, 3);
+        assert_eq!(p.species().len(), 1);
     }
 }
