@@ -8,6 +8,6 @@ extern crate ndarray;
 extern crate lazycell;
 extern crate petgraph;
 
-pub use self::population::Population;
-
 pub mod population;
+pub mod compatibility;
+pub mod evolution;
