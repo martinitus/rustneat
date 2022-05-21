@@ -8,7 +8,8 @@ pub trait Compatibility {
 
 
 /// δ = (c1 * E)/N + (c2 * D)/N + c3*W
-struct DefaultCompatibility {
+#[derive(Debug)]
+pub struct DefaultCompatibility {
     pub c1: f64,
     pub c2: f64,
     pub c3: f64,

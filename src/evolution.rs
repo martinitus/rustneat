@@ -1,16 +1,32 @@
 use ndarray::Array1;
-use population::Population;
+use population::{Population, Species, Genome};
+use compatibility::{DefaultCompatibility, Compatibility};
+use rand::prelude::SliceRandom;
+use rand::rngs::ThreadRng;
 
 pub trait Evolution {
+    /// Check if given genome is compatible with any of the given species.
+    /// If so, return a mutable reference to the species such that the genome can be added to it.
+    /// If no species is compatible a new species will be generated and added to the next generation
+    /// of the population.
+    fn speciate<'a>(&self, genome: &Genome, species: &'a mut [Species]) -> Option<&'a mut Species>;
+
+    /// Generate offspring for the population.
+    /// The fitness corresponds to the fitness of the individuals of the population.
+    fn offspring(&self, population: &Population, fitness: &[f32]) -> Vec<Genome>;
+
+    /// Provide a transformation of the individual fitness values which allows for niching.
+    ///
+    /// See e.g. https://stackoverflow.com/a/38174559/2160256
+    ///
+    fn adjust_fitness(&self, population: &Population, fitness: &[f32]) -> Vec<f32>;
+
     /// Evolve a generation into a new generation.
     ///
     /// Create offspring by mutation and mating. May create new species.
     /// The passed fitness array must be aligned with the populations genome vector.
     /// Returns the next generation of the population.
-    fn evolve(&self, population: &Population, fitness: &Array1<f32>) -> Population;
-
-    // fixme separate genomes of new population into species?
-    // fn speciate(&self);
+    fn evolve(&mut self, population: &Population, fitness: &[f32]) -> Population;
 }
 
 const MUTATION_PROBABILITY: f64 = 0.25f64;
@@ -60,61 +76,160 @@ const MUTATE_TOGGLE_BIAS: f64 = 0.01;
 /// the population is to protect topological innovation. The final goal of the system, then, is to
 /// perform the search for a solution as efficiently as possible. This goal is achieved through
 /// minimizing the dimensionality of the search space.
+#[derive(Debug)]
 pub struct DefaultEvolution {
     epochs_without_improvements: usize,
     max_epochs_without_improvements: usize,
+    species_compatibility_threshold: f64,
+    compatibility: DefaultCompatibility,
+    rng: ThreadRng,
 }
+
+impl Default for DefaultEvolution {
+    fn default() -> Self {
+        Self {
+            epochs_without_improvements: 0,
+            max_epochs_without_improvements: 10,
+            species_compatibility_threshold: 1., // fixme!
+            compatibility: DefaultCompatibility::default(),
+            rng: Default::default(),
+        }
+    }
+}
+
+impl DefaultEvolution {}
 
 
 impl Evolution for DefaultEvolution {
-    fn evolve(&self, population: &Population, fitness: &Array1<f32>) -> Population {
-        // let species = population.species();
-        let genomes = population.genomes();
+    fn speciate<'a>(&self, genome: &Genome, species: &'a mut [Species]) -> Option<&'a mut Species> {
+        species.iter_mut().find(|species| {
+            let distance = self.compatibility.distance(&genome, &species.representative);
+            distance < self.species_compatibility_threshold
+        })
+    }
+
+    fn offspring(&self, population: &Population, fitness: &[f32]) -> Vec<Genome> {
+        // divide fitness of each individual by its species size -> adjusted fitness
+        let adjusted_fitness: Array1<f32> = Iterator::zip(fitness.iter(), population.iter())
+            .map(|(f, (species, _))| f / species.len() as f32)
+            .collect();
+
+        let average_adjusted_fitness = adjusted_fitness.mean().unwrap();
+
+        let median_adjusted_fitness = {
+            let mut tmp = adjusted_fitness.to_vec();
+            tmp.sort_unstable();
+            tmp[tmp.len() / 2]
+        };
+
+        //// gnaaaaa fixme how to determine the number of offspring per individual
+        //// based on its adjusted fitness
+        //  find the number of offspring per species
+        //  sort species according to the individual fitness
+        //  mate individuals off the species that are above median fitness
+        //  in ascending order (repeatedly) until offspring budget for species is exceeded.
+        for (i, (species, genome)) in population.iter().enumerate() {
+            // check if individual is allowed to reproduce
+            if adjusted_fitness[i] > median_adjusted_fitness {
+                let n_offspring = adjusted_fitness[i]
+            }
+        }
+        // let foo: Vec<usize> = (0usize..11).iter().sorted().collet();
+        // fo
+        // let foo = adjusted_fitness.iter().sorted();
+        // let median_adjusted_fitness = adjusted_fitness.clone().quantile_mut(n64(0.5), &Nearest);
+
+        // assert!(&population.species.contains(species));
+        //
+        // species.genomes.clone()
+        //
+        // population
 
         // compute adjusted fitness for each individual
-        let mut adjusted_fitness = (*fitness).clone();
-        for species in population.species() {
-            let indices = species.indices();
-            for index in &indices {
-                adjusted_fitness[*index] = adjusted_fitness[*index] / indices.len() as f32;
+        // let mut adjusted_fitness = (*fitness).clone();
+        // for species in population.species() {
+        //     // fixme!
+        //     // let indices = species.indices();
+        //     // for index in &indices {
+        //     //     adjusted_fitness[*index] = adjusted_fitness[*index] / indices.len() as f32;
+        //     // }
+        // }
+
+        // sort individual within their species according to adjusted fitness
+        vec![]
+    }
+
+    fn adjust_fitness(&self, population: &Population, fitness: &[f32]) -> Vec<f32> {
+        // population.species.iter().map(|s|s.genomes.iter().map)
+        vec![]
+    }
+
+    fn evolve(&mut self, population: &Population, fitness: &[f32]) -> Population {
+        assert_eq!(population.len(), fitness.len());
+
+        // copy over existing species but without any individuals
+        let mut species: Vec<Species> = population.species().iter().map(
+            |s| {
+                Species {
+                    representative: s.representative.clone(),
+                    genomes: Vec::new(),
+                    id: s.id,
+                }
+            }
+        ).collect();
+
+        // create offspring from each species
+        for genome in self.offspring(population, fitness) {
+            // check if there is a matching species in the old generation
+            match self.speciate(&genome, &mut species) {
+                // create new species if no match was found
+                None => {
+                    species.push(Species {
+                        representative: genome.clone(),
+                        id: population.species.last().unwrap().id,
+                        genomes: vec![genome],
+                    });
+                }
+                // otherwise, add genome to existing species
+                Some(s) => {
+                    s.genomes.push(genome);
+                }
             }
         }
 
-        // if self.epochs_without_improvements > MAX_EPOCHS_WITHOUT_IMPROVEMENTS {
-        //     let mut best_species = self.get_best_species();
-        //     let num_of_selected = best_species.len();
-        //     for specie in &mut best_species {
-        //         specie.generate_offspring(
-        //             num_of_organisms.checked_div(num_of_selected).unwrap(),
-        //             &organisms,
-        //         );
-        //     }
-        //     self.epochs_without_improvements = 0;
-        //     return;
-        // }
-        //
-        // let organisms_by_average_fitness =
-        //     num_of_organisms.value_as::<f64>().unwrap() / total_average_fitness;
-        //
-        // for specie in &mut self.species {
-        //     let specie_fitness = specie.calculate_average_fitness();
-        //     let offspring_size = if total_average_fitness <= 0f64 {
-        //         specie.organisms.len()
-        //     } else {
-        //         (specie_fitness * organisms_by_average_fitness).round() as usize
-        //     };
-        //     if offspring_size > 0 {
-        //         specie.generate_offspring(offspring_size, &organisms);
-        //     } else {
-        //         specie.remove_organisms();
-        //     }
-        // }
+        // drop empty species and reassign representatives
+        let species: Vec<Species> = species.into_iter()
+            .filter(|s| s.genomes.len() > 0)
+            .map(|s| {
+                Species {
+                    representative: s.genomes.choose(&mut self.rng).unwrap().clone(),
+                    ..s
+                }
+            })
+            .collect();
+
         Population {
-            genomes: vec![],
             n_inputs: population.n_inputs,
             n_outputs: population.n_outputs,
-            species: vec![],
+            species,
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::Array;
+
+    #[test]
+    fn test_default_evolution() {
+        let population = Population::new(10, 2, 2);
+        let mut evolution = DefaultEvolution::default();
+        let next_gen = evolution.evolve(&population, &[1f32; 10]);
+        assert_eq!(next_gen.len(), population.len());
+        assert_eq!(next_gen.genomes().next().unwrap().inputs.len(), population.genomes().next().unwrap().inputs.len());
+        assert_eq!(next_gen.genomes().next().unwrap().outputs.len(), population.genomes().next().unwrap().outputs.len());
     }
 }
 

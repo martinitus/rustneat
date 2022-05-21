@@ -1,4 +1,4 @@
-use generator::Gn;
+use generator::{Gn, Generator};
 use ndarray::prelude::*;
 use std::cmp::max;
 use petgraph::{Graph};
@@ -330,19 +330,20 @@ impl Genome {
     }
 }
 
+/// A species owns its genomes
 #[derive(Debug)]
 pub struct Species {
     /// The representative defines whether another
     /// individual belongs to the species or not.
-    representative: Genome,
+    pub(crate) representative: Genome,
+    pub(crate) id: usize,
+    pub(crate) genomes: Vec<Genome>,
 }
 
 impl Species {
-    /// The indices of the members of this species mapping into the populations
-    /// overall genome vector.
-    pub fn indices(&self) -> Vec<usize> {
-        unimplemented!();
-        return Vec::new()
+    pub fn len(&self) -> usize { self.genomes.len() }
+    pub fn iter(&self) -> impl Iterator<Item=&'_ Genome> {
+        self.genomes.iter()
     }
 }
 
@@ -353,19 +354,14 @@ impl Species {
 //     ToggleExpression(),
 // }
 
-const MAX_EPOCHS_WITHOUT_IMPROVEMENTS: usize = 10;
-
-/// An ordered collection of genomes and their species. 10
+/// A population owns its species and hence all genomes.
 #[derive(Debug)]
 pub struct Population {
-    /// Outer vector is for the individuals of the population,
-    /// Inner vector holds the genes of the respective individual.
-    pub(crate) genomes: Vec<Genome>,
     /// The number of input or sensor neurons.
     pub(crate) n_inputs: usize,
     /// The number of output  neurons.
     pub(crate) n_outputs: usize,
-
+    /// The species of the population.
     pub(crate) species: Vec<Species>,
     // champion_fitness: f64,
     // epochs_without_improvements: usize,
@@ -374,13 +370,17 @@ pub struct Population {
 }
 
 impl Population {
-    pub fn new(size: usize, inputs: usize, outputs: usize) -> Population {
+    pub fn new(individuals: usize, inputs: usize, outputs: usize) -> Population {
         Population {
-            genomes: vec![],// fixme:Genome::new(inputs, outputs); size
             n_inputs: inputs,
             n_outputs: outputs,
-            //fixme: representative could also be a reference or an index into the genomes array?!
-            species: vec![], // fixme: species initialization
+            species: vec![
+                Species {
+                    representative: Genome::new(inputs, outputs),
+                    id: 0,
+                    genomes: vec![Genome::new(inputs, outputs); individuals],
+                }
+            ],
         }
     }
 
@@ -390,30 +390,41 @@ impl Population {
     }
 
     /// Allow iteration over the genomes of all individuals of the population.
-    pub fn genomes(&self) -> &'_ Vec<Genome> {
-        &self.genomes
+    pub fn genomes(&self) -> impl Iterator<Item=&'_ Genome> {
+        self.species.iter().map(|s| s.genomes.iter()).flatten()
     }
 
     /// The total number of individuals in the population.
     pub fn len(&self) -> usize {
-        self.genomes.len()
+        self.genomes().count()
     }
 
-    // fn get_best_species(&mut self) -> Vec<Species> {
-    //     if self.species.len() <= 2 {
-    //         return self.species.clone();
-    //     }
-    //
-    //     self.species.sort_by(|specie1, specie2| {
-    //         if specie1.calculate_champion_fitness() > specie2.calculate_champion_fitness() {
-    //             Ordering::Greater
-    //         } else {
-    //             Ordering::Less
-    //         }
-    //     });
-    //
-    //     self.species[1..2].to_vec().clone()
-    // }
+    pub fn iter(&self) -> Generator<'_, (), (&'_ Species, &'_ Genome)> {// impl Iterator<Item=> {
+        let g = Gn::new_scoped(move |mut s| {
+            for species in &self.species {
+                for genome in &species.genomes {
+                    s.yield_((species, genome));
+                }
+            }
+            done!();
+        });
+        g
+    }
+}
+
+// fixme: By convention we should also implement this trait with a simple delegation to
+//        population.iter()
+impl<'a> IntoIterator for &'a Population {
+    type Item = (&'a Species, &'a Genome);
+    type IntoIter = Generator<'a, (), Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+        // Self::IntoIter {
+        //     population: self,
+        //     iter: self.species.iter().map(|s|s.genomes.iter()),
+        // }
+    }
 }
 
 
