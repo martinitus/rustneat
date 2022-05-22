@@ -7,6 +7,9 @@ extern crate approx;
 extern crate ndarray;
 extern crate lazycell;
 extern crate petgraph;
+extern crate ndarray_stats;
+// extern crate noisy_float;
+// extern crate num_traits;
 
 pub mod population;
 pub mod compatibility;

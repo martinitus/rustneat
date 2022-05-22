@@ -1,4 +1,4 @@
-use population::{Connection, Genome};
+use population::{Genome};
 
 /// Defines separation of genomes into species and possibility to mate genomes.
 pub trait Compatibility {

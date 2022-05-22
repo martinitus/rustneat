@@ -1,8 +1,12 @@
-use ndarray::Array1;
+use ndarray::{s, Array1, ArrayView};
 use population::{Population, Species, Genome};
 use compatibility::{DefaultCompatibility, Compatibility};
 use rand::prelude::SliceRandom;
 use rand::rngs::ThreadRng;
+use ndarray_stats::QuantileExt;
+// use ndarray_stats::{QuantileExt, Quantile1dExt};
+// use ndarray_stats::interpolate::Nearest;
+// use noisy_float::prelude::{n64, n32};
 
 pub trait Evolution {
     /// Check if given genome is compatible with any of the given species.
@@ -18,8 +22,12 @@ pub trait Evolution {
     /// Provide a transformation of the individual fitness values which allows for niching.
     ///
     /// See e.g. https://stackoverflow.com/a/38174559/2160256
-    ///
-    fn adjust_fitness(&self, population: &Population, fitness: &[f32]) -> Vec<f32>;
+    /// Resulting values must be larger or equal to zero.
+    fn adjust_fitness(&self, population: &Population, fitness: &[f32]) -> Array1<f32>;
+
+    /// Defines how many offspring the species of the population can produce.
+    /// The sum of the returned vector must be equal to the input population size.
+    fn budget(&self, population: &Population, fitness: &[f32]) -> Vec<usize>;
 
     /// Evolve a generation into a new generation.
     ///
@@ -29,15 +37,15 @@ pub trait Evolution {
     fn evolve(&mut self, population: &Population, fitness: &[f32]) -> Population;
 }
 
-const MUTATION_PROBABILITY: f64 = 0.25f64;
-const INTERSPECIE_MATE_PROBABILITY: f64 = 0.001f64;
-const BEST_ORGANISMS_THRESHOLD: f64 = 1f64;
-const MUTATE_CONNECTION_WEIGHT: f64 = 0.90f64;
-const MUTATE_ADD_CONNECTION: f64 = 0.005f64;
-const MUTATE_ADD_NEURON: f64 = 0.004f64;
-const MUTATE_TOGGLE_EXPRESSION: f64 = 0.001f64;
-const MUTATE_CONNECTION_WEIGHT_PERTURBED_PROBABILITY: f64 = 0.90f64;
-const MUTATE_TOGGLE_BIAS: f64 = 0.01;
+// const MUTATION_PROBABILITY: f64 = 0.25f64;
+// const INTERSPECIE_MATE_PROBABILITY: f64 = 0.001f64;
+// const BEST_ORGANISMS_THRESHOLD: f64 = 1f64;
+// const MUTATE_CONNECTION_WEIGHT: f64 = 0.90f64;
+// const MUTATE_ADD_CONNECTION: f64 = 0.005f64;
+// const MUTATE_ADD_NEURON: f64 = 0.004f64;
+// const MUTATE_TOGGLE_EXPRESSION: f64 = 0.001f64;
+// const MUTATE_CONNECTION_WEIGHT_PERTURBED_PROBABILITY: f64 = 0.90f64;
+// const MUTATE_TOGGLE_BIAS: f64 = 0.01;
 
 
 /// Implement evolving new individuals and species as close to the original paper as possible.
@@ -109,16 +117,15 @@ impl Evolution for DefaultEvolution {
     }
 
     fn offspring(&self, population: &Population, fitness: &[f32]) -> Vec<Genome> {
-        // divide fitness of each individual by its species size -> adjusted fitness
-        let adjusted_fitness: Array1<f32> = Iterator::zip(fitness.iter(), population.iter())
-            .map(|(f, (species, _))| f / species.len() as f32)
-            .collect();
+        // shift fitness such that the lowest value is zero
+        let adjusted_fitness = self.adjust_fitness(population, fitness);
+        // let foo = adjusted_fitness.as
 
-        let average_adjusted_fitness = adjusted_fitness.mean().unwrap();
-
+        // let average_adjusted_fitness = adjusted_fitness.mean().unwrap();
+        // adjusted_fitness.clone().quantile_mut(n64(0.5),&Nearest);
         let median_adjusted_fitness = {
             let mut tmp = adjusted_fitness.to_vec();
-            tmp.sort_unstable();
+            tmp.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap());
             tmp[tmp.len() / 2]
         };
 
@@ -128,10 +135,10 @@ impl Evolution for DefaultEvolution {
         //  sort species according to the individual fitness
         //  mate individuals off the species that are above median fitness
         //  in ascending order (repeatedly) until offspring budget for species is exceeded.
-        for (i, (species, genome)) in population.iter().enumerate() {
+        for (i, (_, _)) in population.iter().enumerate() {
             // check if individual is allowed to reproduce
             if adjusted_fitness[i] > median_adjusted_fitness {
-                let n_offspring = adjusted_fitness[i]
+                // let n_offspring = adjusted_fitness[i]
             }
         }
         // let foo: Vec<usize> = (0usize..11).iter().sorted().collet();
@@ -159,9 +166,48 @@ impl Evolution for DefaultEvolution {
         vec![]
     }
 
-    fn adjust_fitness(&self, population: &Population, fitness: &[f32]) -> Vec<f32> {
-        // population.species.iter().map(|s|s.genomes.iter().map)
-        vec![]
+    fn adjust_fitness(&self, population: &Population, fitness: &[f32]) -> Array1<f32> {
+        let fitness = ArrayView::from(fitness);
+        let min = fitness.min_skipnan();
+        // divide fitness of each individual by its species size -> adjusted fitness
+        Iterator::zip(fitness.iter(), population.iter())
+            .map(|(f, (species, _))| (f - min) / species.len() as f32)
+            .collect()
+    }
+
+    fn budget(&self, population: &Population, fitness: &[f32]) -> Vec<usize> {
+        let fitness: Array1<f32> = self.adjust_fitness(population, fitness);
+        let mut c = 0;
+        let mut species_fitness: Vec<f32> = vec![0.; population.species().len()];
+        let mut species_fitness_sum: f32 = 0.;
+        for (i, s) in population.species().iter().enumerate()
+        {
+            species_fitness[i] = fitness.slice(s![c..s.len()]).mean().unwrap();
+            species_fitness_sum += species_fitness[i];
+            c += s.len();
+        }
+
+        let mut counts: Array1<usize> = species_fitness.iter().map(
+            |f| { f32::floor(f * population.len() as f32 / species_fitness_sum) as usize }
+        ).collect();
+
+        let delta = counts.sum() as isize - population.len() as isize;
+
+        if delta < 0 {
+            for _ in 0..delta.abs() {
+                // find smallest species and increment by one
+                let smallest = counts.argmin().unwrap();
+                counts[smallest] += 1;
+            }
+        } else if delta > 0 {
+            for _ in 0..delta.abs() {
+                // find largest species and decrement by one
+                let largest = counts.argmax().unwrap();
+                counts[largest] -= 1;
+            }
+        }
+
+        counts.to_vec()
     }
 
     fn evolve(&mut self, population: &Population, fitness: &[f32]) -> Population {
@@ -220,7 +266,6 @@ impl Evolution for DefaultEvolution {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::Array;
 
     #[test]
     fn test_default_evolution() {
@@ -230,6 +275,33 @@ mod tests {
         assert_eq!(next_gen.len(), population.len());
         assert_eq!(next_gen.genomes().next().unwrap().inputs.len(), population.genomes().next().unwrap().inputs.len());
         assert_eq!(next_gen.genomes().next().unwrap().outputs.len(), population.genomes().next().unwrap().outputs.len());
+    }
+
+    #[test]
+    fn test_total_budget_equals_population_size() {
+        let genome = Genome {
+            graph: Default::default(),
+            bias: Default::default(),
+            inputs: vec![],
+            outputs: vec![],
+        };
+        let mut population = Population::new(5, 2, 2);
+        population.species = vec![
+            Species {
+                representative: genome.clone(),
+                id: 0,
+                genomes: vec![genome.clone(), genome.clone()],
+            },
+            Species {
+                representative: genome.clone(),
+                id: 0,
+                genomes: vec![genome.clone(), genome.clone(), genome.clone()],
+            },
+        ];
+        let evolution = DefaultEvolution::default();
+        let budget = evolution.budget(&population, &[5., 1., 3., 4., 5.]);
+        println!("{:?}", budget);
+        assert_eq!(budget.iter().fold(0, |acc, &x| acc + x), 5);
     }
 }
 

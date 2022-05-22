@@ -1,10 +1,6 @@
 use generator::{Gn, Generator};
-use ndarray::prelude::*;
-use std::cmp::max;
 use petgraph::{Graph};
 use petgraph::graph::{NodeIndex, EdgeIndex};
-use std::sync::Arc;
-use std::cell::RefCell;
 
 /// A connection Gene
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
@@ -73,8 +69,8 @@ impl GenomePool {
     pub fn new(inputs: usize, outputs: usize) -> Self {
         let mut graph: Graph<(), ()> = Graph::default();
         let bias: NodeIndex = graph.add_node(());
-        let inputs: Vec<NodeIndex> = (0..inputs).map(|i| graph.add_node(())).collect();
-        let outputs: Vec<NodeIndex> = (0..outputs).map(|i| graph.add_node(())).collect();
+        let inputs: Vec<NodeIndex> = (0..inputs).map(|_| graph.add_node(())).collect();
+        let outputs: Vec<NodeIndex> = (0..outputs).map(|_| graph.add_node(())).collect();
 
         for o in outputs.iter() {
             graph.add_edge(bias, *o, ());
@@ -120,7 +116,7 @@ impl GenomePool {
     pub fn split(&mut self, source: &NodeId, target: &NodeId) -> (NodeId, (EdgeId, EdgeId)) {
         match self.overlay.find_edge(source.0, target.0) {
             None => { panic!("Edge not found"); }
-            Some(e) => {
+            Some(_) => {
                 let node = self.overlay.add_node(());
                 let e1 = self.overlay.add_edge(source.0, node, ());
                 let e2 = self.overlay.add_edge(node, target.0, ());
@@ -443,11 +439,11 @@ mod tests {
             assert_eq!(zipped_1, zipped_2);
         }
         {
-            /// Setup, 2 inputs, 2, outputs, one bias -> 6 matching base genes!
-            /// Gene Position | 0 2 4 6 8 .... N=15
-            /// Genome A      | ####### # ## ###
-            /// Genome B      | ###### ######
-            /// Type          | MMMMMMDDMDMMDEEE
+            // Setup, 2 inputs, 2, outputs, one bias -> 6 matching base genes!
+            // Gene Position | 0 2 4 6 8 .... N=15
+            // Genome A      | ####### # ## ###
+            // Genome B      | ###### ######
+            // Type          | MMMMMMDDMDMMDEEE
             let mut a = Genome::new(2, 2);
             let mut b = Genome::new(2, 2);
             let n6 = a.graph.add_node(NodeId(NodeIndex::new(6)));
