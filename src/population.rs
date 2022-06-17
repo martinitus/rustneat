@@ -1,3 +1,4 @@
+use std::slice::Iter;
 use generator::{Gn, Generator};
 use petgraph::{Graph};
 use petgraph::graph::{NodeIndex, EdgeIndex};
@@ -58,9 +59,9 @@ pub struct Genome {
 }
 
 /// Track the overlay graph of a set of genomes to provide unique node and edge ids.
+/// The node indices of the overlay define the node ids of the genes in a genome.
 pub struct GenomePool {
     overlay: Graph<(), ()>,
-    genomes: Vec<Genome>,
 }
 
 
@@ -79,7 +80,7 @@ impl GenomePool {
             }
         }
 
-        Self { overlay: graph, genomes: Vec::new() }
+        Self { overlay: graph }
     }
 
     pub fn spawn_genome(&self) -> Genome {
@@ -338,17 +339,21 @@ pub struct Species {
 
 impl Species {
     pub fn len(&self) -> usize { self.genomes.len() }
-    pub fn iter(&self) -> impl Iterator<Item=&'_ Genome> {
+    pub fn iter(&self) -> Iter<'_, Genome> {
         self.genomes.iter()
     }
 }
 
-// pub enum Mutation {
-//     AddEdge { source_id: int, target_id: int },
-//     AddNode(),
-//     ChangeWeight(),
-//     ToggleExpression(),
-// }
+/// By convention this trait is implemented with a simple delegation to
+/// population.iter().
+impl<'a> IntoIterator for &'a Species {
+    type Item = &'a Genome;
+    type IntoIter = Iter<'a, Genome>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
 
 /// A population owns its species and hence all genomes.
 #[derive(Debug)]
@@ -359,10 +364,6 @@ pub struct Population {
     pub(crate) n_outputs: usize,
     /// The species of the population.
     pub(crate) species: Vec<Species>,
-    // champion_fitness: f64,
-    // epochs_without_improvements: usize,
-    // /// champion of the population
-    // pub champion: Option<Organism>,
 }
 
 impl Population {
