@@ -1,10 +1,10 @@
 use ndarray::{s, Array1, ArrayView};
-use population::{Population, Species, Genome, GenomePool};
+use population::{Population, Species, Genome, Overlay};
 use compatibility::{DefaultCompatibility, Compatibility};
 use rand::prelude::{IteratorRandom, SliceRandom};
 use rand::rngs::ThreadRng;
 use ndarray_stats::QuantileExt;
-use std::cmp::min;
+use itertools::Itertools;
 use rand::Rng;
 // use ndarray_stats::{QuantileExt, Quantile1dExt};
 // use ndarray_stats::interpolate::Nearest;
@@ -19,7 +19,7 @@ pub trait Evolution {
 
     /// Generate offspring for the population.
     /// The fitness corresponds to the fitness of the individuals of the population.
-    fn offspring(&mut self, population: &Population, fitness: &[f32]) -> (GenomePool, Vec<Genome>);
+    fn offspring(&mut self, population: &Population, fitness: &[f32]) -> (Overlay, Vec<Genome>);
 
     /// Provide a transformation of the individual fitness values which allows for niching.
     ///
@@ -27,9 +27,9 @@ pub trait Evolution {
     /// Resulting values must be larger or equal to zero.
     fn adjust_fitness(&self, population: &Population, fitness: &[f32]) -> Array1<f32>;
 
-    /// Mate and or mutate given parent (with a different genomes of the population or species)
-    /// resulting in a new genome.
-    fn reproduce(&self, parent: &Genome, population: &Population, species: &Species) -> Genome;
+    // /// Mate and or mutate given parent (with a different genomes of the population or species)
+    // /// resulting in a new genome.
+    // fn reproduce(&self, parent: &Genome, population: &Population, species: &Species) -> Genome;
 
     /// Defines how many offspring the species of the population can produce.
     /// The sum of the returned vector must be equal to the input population size.
@@ -43,17 +43,13 @@ pub trait Evolution {
     /// The passed fitness array must be aligned with the populations genome vector.
     /// Returns the next generation of the population.
     fn evolve(&mut self, population: &Population, fitness: &[f32]) -> Population;
-}
 
-// const MUTATION_PROBABILITY: f64 = 0.25f64;
-// const INTERSPECIE_MATE_PROBABILITY: f64 = 0.001f64;
-// const BEST_ORGANISMS_THRESHOLD: f64 = 1f64;
-// const MUTATE_CONNECTION_WEIGHT: f64 = 0.90f64;
-// const MUTATE_ADD_CONNECTION: f64 = 0.005f64;
-// const MUTATE_ADD_NEURON: f64 = 0.004f64;
-// const MUTATE_TOGGLE_EXPRESSION: f64 = 0.001f64;
-// const MUTATE_CONNECTION_WEIGHT_PERTURBED_PROBABILITY: f64 = 0.90f64;
-// const MUTATE_TOGGLE_BIAS: f64 = 0.01;
+    /// Mutate an individual
+    fn mutate(&mut self, genome:  Genome) -> Genome;
+
+    /// Breed a single offspring from two parents
+    fn breed(&mut self, genome1: &Genome, genome2: &Genome) -> Genome;
+}
 
 
 /// Implement evolving new individuals and species as close to the original paper as possible.
@@ -94,8 +90,6 @@ pub trait Evolution {
 /// minimizing the dimensionality of the search space.
 #[derive(Debug)]
 pub struct DefaultEvolution {
-    epochs_without_improvements: usize,
-    max_epochs_without_improvements: usize,
     species_compatibility_threshold: f64,
     /// The fitness quantile a genome must reach within a species to be allowed to reproduce.
     /// E.g. for 0.5, the upper 50% of a species are allowed to reproduce if the species has
@@ -104,10 +98,20 @@ pub struct DefaultEvolution {
     genome_reproduction_threshold: f64,
     /// The fitness quantile a genome must reach to be randomly selected as mating partner.
     genome_reproduction_mating_threshold: f64,
+    // mutation_probability: f64,
     /// The probability that offspring is created by a single parent only by mutation.
     mutation_only_probability: f64,
     /// The probability to pick a mating partner from any species (not necessarily the own).
-    cross_species_mating_probability: f64,
+    inter_species_mating_probability: f64,
+
+    /// Probability to add a new node (split existing edge into two)
+    mutate_add_node_probability: f64,
+    /// Probability to add a new edge
+    mutate_add_edge_probability: f64,
+    // const BEST_ORGANISMS_THRESHOLD: f64 = 1f64;
+// const MUTATE_TOGGLE_EXPRESSION: f64 = 0.001f64;
+// const MUTATE_CONNECTION_WEIGHT_PERTURBED_PROBABILITY: f64 = 0.90f64;
+// const MUTATE_TOGGLE_BIAS: f64 = 0.01;
     compatibility: DefaultCompatibility,
     rng: ThreadRng,
 }
@@ -115,13 +119,16 @@ pub struct DefaultEvolution {
 impl Default for DefaultEvolution {
     fn default() -> Self {
         Self {
-            epochs_without_improvements: 0,
-            max_epochs_without_improvements: 10,
             species_compatibility_threshold: 1., // fixme!
             genome_reproduction_threshold: 0.5,
             genome_reproduction_mating_threshold: 0.5,
-            mutation_only_probability: 0.0,
-            cross_species_mating_probability: 0.01,
+
+            // Original paper: "In each generation, 25% of offspring resulted from mutation without crossover."
+            // Not clear how exactly that was done, here, we simply use it as probability
+            mutation_only_probability: 0.25,
+            inter_species_mating_probability: 0.001,
+            mutate_add_node_probability: 0.03,
+            mutate_add_edge_probability: 0.3,
             compatibility: DefaultCompatibility::default(),
             rng: Default::default(),
         }
@@ -139,70 +146,71 @@ impl Evolution for DefaultEvolution {
         })
     }
 
-    fn offspring(&mut self, population: &Population, fitness: &[f32]) -> (GenomePool, Vec<Genome>) {
+    fn offspring(&mut self, population: &Population, fitness: &[f32]) -> (Overlay, Vec<Genome>) {
         // shift fitness such that the lowest value is zero
         // let adjusted_fitness = self.adjust_fitness(population, fitness);	
         // let fitness = ArrayView::from(fitness);
 
-        let budget = self.budget(population, fitness);
-        let overlay = GenomePool::new(1, 1); // fixme clone from existing population
+        let _budget = self.budget(population, fitness);
+        let overlay = Overlay::new(1, 1); // fixme clone from existing population
 
         // the offset for each species
-        let mut c: usize = 0;
-        let mut o: Vec<Genome> = Vec::with_capacity(population.len());
+        let mut offset: usize = 0;
+        let mut offspring: Vec<Genome> = Vec::with_capacity(population.len());
 
         // fixme: would be nce if self.budget() would return an iterable over species, budget pairs.
-        for (b, species) in budget.iter().zip(population.species())
+        for (budget, species) in _budget.iter().zip(population.species())
         {
             // sort individual within their species according to (adjusted) fitness.
             // It doesn't really matter whether we sort according to their fitness
             // or adjusted fitness, because they are rescaled by the same factor.
-            let mut sorted: Vec<(&Genome, &f32)> = species.genomes.iter().zip(&fitness[c..species.len()]).collect();
-            sorted.sort_unstable_by(|a, b| a.1.partial_cmp(b.1).unwrap());
+            let sorted: Vec<(&Genome, &f32)> = species.genomes
+                .iter()
+                .zip(&fitness[offset..species.len()])
+                .sorted_unstable_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                .collect();
             let mut k = 0;
-            while &k < b {
-                // get the top b genomes from the upper nth quantile of the species and mutate / reproduce them.
+            while &k < budget {
+                // get the top genomes from the upper nth quantile of the species and mutate / reproduce them.
                 // if the upper nth quantile does not contain b genomes, repeat until b offspring are generated.
                 let n = std::cmp::min(
                     f64::ceil(species.len() as f64 * self.genome_reproduction_threshold) as usize,
-                    b.clone(),
+                    budget.clone(),
                 );
 
                 let other_range = &sorted[0..f64::floor(sorted.len() as f64 * self.genome_reproduction_mating_threshold) as usize];
                 for i in 0..n {
+                    // either take an individual directly for mutation or breed a new individual from two parents.
                     let breed: Genome = {
                         let parent = sorted[i].0;
                         if self.rng.gen_bool(self.mutation_only_probability) {
-                            let breed = parent.clone();
-                            // fixme: mutate breed
-                            breed
+                            parent.clone()
                         } else {
                             let other = {
-                                if self.rng.gen_bool(self.cross_species_mating_probability) {
+                                if self.rng.gen_bool(self.inter_species_mating_probability) || species.len() == 1 {
                                     population.genomes().choose(&mut self.rng).unwrap()
                                 } else {
-                                    sorted.choose(&mut self.rng).unwrap().0
+                                    species.iter().choose(&mut self.rng).unwrap()
                                 }
                             };
+                            self.breed(parent, other)
                         }
-
-                        parent.clone()
                     };
-                    o.push(breed);
+                    offspring.push(self.mutate(breed));
                 }
 
                 k = k + n;
             }
 
-            c += species.len();
+            offset += species.len();
         }
-        o
+        (overlay, offspring)
     }
 
-    fn reproduce(&self, parent: &Genome, population: &Population, species: &Species) -> Genome {
-        unimplemented!();
-        Genome::new(1, 1)
-    }
+    // fn reproduce(&self, parent: &Genome, population: &Population, species: &Species) -> Genome {
+    //     unimplemented!();
+    //     Genome::new(1, 1)
+    // }
 
     fn adjust_fitness(&self, population: &Population, fitness: &[f32]) -> Array1<f32> {
         let fitness = ArrayView::from(fitness);
@@ -270,7 +278,8 @@ impl Evolution for DefaultEvolution {
         ).collect();
 
         // create offspring from each species
-        for genome in self.offspring(population, fitness) {
+        let (overlay, offspring) = self.offspring(population, fitness);
+        for genome in offspring {
             // check if there is a matching species in the old generation
             match self.speciate(&genome, &mut species) {
                 // create new species if no match was found
@@ -304,6 +313,39 @@ impl Evolution for DefaultEvolution {
             n_outputs: population.n_outputs,
             species,
         }
+    }
+
+    /// From the original paper:
+    /// > There was an 80% chance of a genome having its connection weights mutated, in which case each weight had a
+    /// > 90% chance of being uniformly perturbed and a 10% chance of being assigned a new random value. [...]
+    /// > In smaller populations, the probability of adding a new node was 0.03 and the probability of a new link
+    /// > mutation was 0.05. In the larger population, the probability of adding a new link was 0.3, because a  larger
+    /// > population can tolerate a larger number of prospective species and greater topological diversity
+    fn mutate(&mut self, mut genome: Genome) -> Genome {
+        if self.rng.gen_bool(0.8) {
+            for connection in genome.graph.edge_weights_mut() {
+                if self.rng.gen_bool(0.9) {
+                    // uniform perturbation
+                    connection.gene.weight += self.rng.gen_range(-1f64..1f64)
+                } else {
+                    // new random value the paper does not seem to specify the distribution...
+                    connection.gene.weight = self.rng.gen_range(-1f64..1f64)
+                }
+            }
+        }
+        if self.rng.gen_bool(self.mutate_add_node_probability) {
+            genome.split()
+        }
+        if self.rng.gen_bool(self.mutate_add_edge_probability) {}
+        genome
+    }
+
+    /// From the original paper:
+    /// > There was a 75% chance that an inherited gene was disabled if it was disabled in either parent. In each
+    /// > generation, 25% of offspring resulted from mutation without crossover. The interspecies mating rate was 0.001.
+    fn breed(&mut self, genome1: &Genome, genome2: &Genome) -> Genome {
+        todo!();
+        genome1.clone()
     }
 }
 

@@ -18,11 +18,11 @@ impl Default for ConnectionGene {
     }
 }
 
-/// Uniquely identify a node within all genomes of a population.
+/// Identify a node within all genomes of a population (the overlay).
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct NodeId(NodeIndex);
 
-/// Uniquely identify an edge within all genomes of a population.
+/// Identify an edge within all genomes of a population (the overlay).
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct EdgeId(EdgeIndex);
 
@@ -54,18 +54,16 @@ pub struct Genome {
     pub(crate) bias: NodeIndex,
     pub(crate) inputs: Vec<NodeIndex>,
     pub(crate) outputs: Vec<NodeIndex>,
-    // The connections of the graph in ascending innovation order
-    // // connections: Vec<&'a Connection>, // fixme: remove beacuse as we only ever add nodes probably petgraph edeglist will have the order.
 }
 
 /// Track the overlay graph of a set of genomes to provide unique node and edge ids.
 /// The node indices of the overlay define the node ids of the genes in a genome.
-pub struct GenomePool {
+pub struct Overlay {
     overlay: Graph<(), ()>,
 }
 
 
-impl GenomePool {
+impl Overlay {
     /// Generate an empty pool for genomes with the given number of inputs and outputs.
     pub fn new(inputs: usize, outputs: usize) -> Self {
         let mut graph: Graph<(), ()> = Graph::default();
@@ -179,7 +177,7 @@ impl Genome {
     ///  - Panics if source or target are not in the graph or the overlay.
     ///  - There must not already be a connection.
     ///  - Passed innovation id must be greater than any innovation id in this genome.
-    pub fn insert(&mut self, source: NodeIndex, target: NodeIndex, overlay: &mut GenomePool) {
+    pub fn insert(&mut self, source: NodeIndex, target: NodeIndex, overlay: &mut Overlay) {
         assert_eq!(self.graph.edges_connecting(source, target).count(), 0);
         // check if there is already a matching connection in the overlay
         let source_id = self.graph.node_weight(source).unwrap();
@@ -193,7 +191,7 @@ impl Genome {
     /// Split an existing connection into two by inserting a new node and disabling the present connection.
     /// - Panics if there is no connection from source to target.
     /// - Panic if the connection from source to target is disabled.
-    pub fn split(&mut self, source: NodeIndex, target: NodeIndex, overlay: &mut GenomePool) -> ((NodeIndex, NodeId), ((EdgeIndex, EdgeId), (EdgeIndex, EdgeId))) {
+    pub fn split(&mut self, source: NodeIndex, target: NodeIndex, overlay: &mut Overlay) -> ((NodeIndex, NodeId), ((EdgeIndex, EdgeId), (EdgeIndex, EdgeId))) {
         if !self.graph.edges_connecting(source, target).next().unwrap().weight().gene.enabled {
             panic!("Edge from {source:?} to {target:?} is disabled");
         }
@@ -226,17 +224,17 @@ impl Genome {
         ((node, node_id), ((e1, head_id), (e2, tail_id)))
     }
 
-    /// Get the connection with given innovation number.
-    pub fn innovation(&self, id: usize) -> Option<&'_ Connection> {
-        if id > self.graph.edge_weights().last().unwrap().id.0.index() {
-            return None;
-        }
-        unimplemented!()
-        // match self.connections.binary_search_by_key(&id, move |conn| conn.innovation_id) {
-        //     Ok(pos) => Some(&self.connections[pos]),
-        //     Err(_) => None
-        // }
-    }
+    // /// Get the connection with given innovation number.
+    // pub fn innovation(&self, id: usize) -> Option<&'_ Connection> {
+    //     if id > self.graph.edge_weights().last().unwrap().id.0.index() {
+    //         return None;
+    //     }
+    //     unimplemented!()
+    //     // match self.connections.binary_search_by_key(&id, move |conn| conn.innovation_id) {
+    //     //     Ok(pos) => Some(&self.connections[pos]),
+    //     //     Err(_) => None
+    //     // }
+    // }
 
     /// Iterate over the aligned parts of two genomes.
     /// Visually one can represent the matching (M), disjoint (D) and excess (E) genes as follows:
